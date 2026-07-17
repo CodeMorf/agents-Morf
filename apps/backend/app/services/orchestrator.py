@@ -50,7 +50,12 @@ async def _provider_configs(
     db: AsyncSession,
     organization_id: uuid.UUID,
     preferred_provider_id: uuid.UUID | None,
+    *,
+    force_local: bool = False,
+    include_local: bool | None = None,
 ) -> list[ProviderConfig]:
+    from app.services.hybrid_router import is_local_kind
+
     stmt = select(Provider).where(
         Provider.organization_id == organization_id, Provider.enabled.is_(True)
     )
@@ -119,10 +124,30 @@ async def _provider_configs(
                 settings.anthropic_api_key,
             )
         )
-    # Ollama is last by default; hybrid_router may promote it only for light tasks.
-    configs.append(
-        ProviderConfig("ollama", "Ollama", settings.ollama_base_url, settings.ollama_model, None)
+    # Ollama is registered only when local chat is explicitly allowed or force_local.
+    allow_local = (
+        force_local
+        or settings.allow_local_chat_fallback
+        or (include_local is True)
     )
+    if allow_local or include_local is not False:
+        # Always register Ollama for non-chat task paths; chat filters below.
+        configs.append(
+            ProviderConfig(
+                "ollama",
+                "Ollama",
+                settings.ollama_base_url,
+                settings.ollama_model,
+                None,
+                {
+                    "limited_capacity": True,
+                    "chat_allowed": bool(force_local or settings.allow_local_chat_fallback),
+                    "max_parallel": settings.local_max_parallel_inferences,
+                    "cpu_threshold": settings.local_cpu_threshold_percent,
+                    "timeout_seconds": settings.local_inference_timeout_seconds,
+                },
+            )
+        )
     if settings.grok_build_enabled:
         configs.append(
             ProviderConfig(
@@ -135,8 +160,25 @@ async def _provider_configs(
             )
         )
     # Default order for chat: external cloud first, Ollama last (CPU protection)
-    decision = decide(TaskClass.conversation, production_conversation=True)
-    return order_configs(configs, decision)
+    decision = decide(
+        TaskClass.conversation,
+        production_conversation=not force_local,
+        force_local=force_local,
+        force_external=not force_local and not settings.allow_local_chat_fallback,
+        cpu_threshold=settings.local_cpu_threshold_percent,
+    )
+    ordered = order_configs(configs, decision)
+    # Production chat: never fall back to local unless explicitly allowed or forced.
+    if not force_local and not settings.allow_local_chat_fallback:
+        ordered = [c for c in ordered if not is_local_kind(c.kind)]
+    # Prefer Groq when present among external providers (stable primary for Studio).
+    ordered.sort(
+        key=lambda c: (
+            0 if c.name.lower() == "groq" else 1,
+            0 if "groq" in (c.base_url or "").lower() else 1,
+        )
+    )
+    return ordered
 
 
 async def _training_context(
@@ -199,6 +241,7 @@ async def run_agent(
     *,
     conversation_id: uuid.UUID | None = None,
     end_user_id: str | None = None,
+    force_local: bool = False,
 ) -> AgentRunResult:
     system_prompt = agent.system_prompt if agent else DEFAULT_AGENT_PROMPT
     instructions = agent.instructions if agent else ""
@@ -244,7 +287,18 @@ async def run_agent(
         {"role": "system", "content": "\n\n---\n\n".join(context_sections)}
     ] + [dict(message) for message in messages if message["role"] != "system"]
 
-    configs = await _provider_configs(db, organization_id, agent.provider_id if agent else None)
+    configs = await _provider_configs(
+        db,
+        organization_id,
+        agent.provider_id if agent else None,
+        force_local=force_local,
+    )
+    if not configs:
+        raise ProviderError(
+            "No external providers available for conversation. "
+            "Configure GROQ_API_KEY (or another cloud provider). "
+            "Local Ollama is not used for production chat."
+        )
     temperature = (
         requested_temperature
         if requested_temperature is not None

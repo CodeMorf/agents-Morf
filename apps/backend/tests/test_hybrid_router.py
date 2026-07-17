@@ -82,3 +82,16 @@ def test_light_task_may_prefer_local_when_not_busy():
     )
     assert d.prefer_local is True
     assert d.local_allowed is True
+
+
+def test_force_external_blocks_local_for_chat_policy():
+    d = decide(TaskClass.conversation, force_external=True)
+    assert d.prefer_local is False
+    assert d.local_allowed is False
+
+
+def test_is_local_kind():
+    from app.services.hybrid_router import is_local_kind
+
+    assert is_local_kind("ollama") is True
+    assert is_local_kind("openai_compatible") is False

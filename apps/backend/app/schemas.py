@@ -407,6 +407,7 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: int | None = Field(default=None, ge=1, le=128000)
     stream: bool = False
     remember: bool = True
+    force_local: bool = False
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -435,3 +436,6 @@ class ChatCompletionResponse(BaseModel):
     memory_hits: int = 0
     knowledge_hits: int = 0
     request_id: str = ""
+    latency_ms: int = 0
+    fallback_used: bool = False
+    provider_errors: list[str] = Field(default_factory=list)

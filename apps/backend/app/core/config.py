@@ -28,15 +28,15 @@ class Settings(BaseSettings):
     auto_create_schema: bool = True
 
     default_organization_name: str = "CodeMorf"
-    default_provider: str = "ollama"
-    default_model: str = "qwen2.5:7b"
+    default_provider: str = "groq"
+    default_model: str = "llama-3.1-8b-instant"
 
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4.1-mini"
     groq_api_key: str | None = None
     groq_base_url: str = "https://api.groq.com/openai/v1"
-    groq_model: str | None = None
+    groq_model: str | None = "llama-3.1-8b-instant"
     openrouter_api_key: str | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_model: str | None = None
@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-3-5-haiku-latest"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:7b"
+
+    # Hybrid routing: production chat never falls back to local Ollama by default.
+    allow_local_chat_fallback: bool = False
+    local_cpu_threshold_percent: float = 60.0
+    local_inference_timeout_seconds: int = 25
+    local_max_parallel_inferences: int = 1
 
     embedding_provider: Literal["ollama", "openai_compatible", "disabled"] = "ollama"
     embedding_base_url: str = "http://localhost:11434"

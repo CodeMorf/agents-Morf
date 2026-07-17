@@ -33,11 +33,14 @@ import {
   Feedback,
   KnowledgeBase,
   MemoryItem,
+  ModelCatalog,
   Organization,
   Provider,
   Tool,
   TrainingDataset,
   TrainingExample,
+  UsagePoint,
+  UsageReport,
   api,
 } from './api'
 
@@ -92,6 +95,8 @@ function Login() {
 
 const nav = [
   ['/', 'Overview', Gauge],
+  ['/models', 'Modelos', Sparkles],
+  ['/usage', 'Uso', Activity],
   ['/agents', 'Agents', Bot],
   ['/studio', 'Studio', MessagesSquare],
   ['/memory', 'Memory', BrainCircuit],
@@ -99,7 +104,7 @@ const nav = [
   ['/training', 'Training', TestTube2],
   ['/feedback', 'Feedback', MessageCircleWarning],
   ['/tools', 'Tools', Wrench],
-  ['/providers', 'Providers', Sparkles],
+  ['/providers', 'Providers', Network],
   ['/api-keys', 'API keys', KeyRound],
   ['/docs', 'API docs', Braces],
   ['/settings', 'Settings', Settings],
@@ -185,15 +190,175 @@ function AgentsPage() {
   </section>
 }
 
+function MiniChart({ title, points }: { title: string; points?: UsagePoint[] }) {
+  if (!points || points.length === 0) {
+    return <article className="chart-card"><h4>{title}</h4><p className="muted">No hay datos suficientes</p></article>
+  }
+  const max = Math.max(...points.map(p => p.value), 1)
+  const width = 320
+  const height = 120
+  const step = points.length > 1 ? width / (points.length - 1) : width
+  const path = points.map((p, i) => {
+    const x = i * step
+    const y = height - (p.value / max) * (height - 12) - 6
+    return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+  return <article className="chart-card">
+    <h4>{title}</h4>
+    <svg viewBox={`0 0 ${width} ${height}`} className="sparkline" role="img" aria-label={title}>
+      <path d={path} fill="none" stroke="#35eddb" strokeWidth="2.5" />
+      {points.map((p, i) => {
+        const x = i * step
+        const y = height - (p.value / max) * (height - 12) - 6
+        return <circle key={p.date + i} cx={x} cy={y} r="3" fill="#2b8cff" />
+      })}
+    </svg>
+    <div className="chart-footer"><span>{points[0]?.date}</span><span>{points[points.length - 1]?.date}</span></div>
+  </article>
+}
+
+function ModelsPage() {
+  const { data, error } = useQuery({ queryKey: ['models-catalog'], queryFn: () => api<ModelCatalog>('/dashboard/models') })
+  return <section className="panel">
+    <PageHeader eyebrow="MODEL CATALOG" title="Modelos" subtitle="Estado de proveedores cloud y locales. Las claves API nunca se muestran." />
+    <ErrorBox error={error} />
+    {data && <div className="chips" style={{ marginBottom: 16 }}>
+      <span>Default: {data.default_provider} / {data.default_model}</span>
+      <span>Local chat fallback: {data.allow_local_chat_fallback ? 'ON' : 'OFF'}</span>
+    </div>}
+    <div className="table-wrap"><table>
+      <thead><tr>
+        <th>Proveedor</th><th>Modelo</th><th>ID</th><th>Tipo</th><th>Estado</th><th>Salud</th>
+        <th>Prioridad</th><th>Uso</th><th>Chat</th><th>Embed</th><th>Tools</th><th>Stream</th>
+        <th>Contexto</th><th>Latencia</th><th>Errores</th><th>Última prueba</th><th>Rol</th>
+      </tr></thead>
+      <tbody>{(data?.models || []).map(m => <tr key={m.id}>
+        <td><b>{m.provider}</b><small>{m.provider_kind}</small></td>
+        <td>{m.name}</td>
+        <td><code>{m.model_id}</code></td>
+        <td>{m.type}</td>
+        <td>{m.enabled ? 'enabled' : 'disabled'}</td>
+        <td>{m.health}</td>
+        <td>{m.priority}</td>
+        <td>{m.usage_allowed ? 'yes' : 'no'}</td>
+        <td>{m.chat_allowed ? 'yes' : 'no'}</td>
+        <td>{m.embeddings_allowed ? 'yes' : 'no'}</td>
+        <td>{m.tool_calling ? 'yes' : 'no'}</td>
+        <td>{m.streaming ? 'yes' : 'no'}</td>
+        <td>{m.max_context ?? '—'}</td>
+        <td>{m.recent_latency_ms != null ? `${m.recent_latency_ms} ms` : '—'}</td>
+        <td>{m.error_count ?? 0}</td>
+        <td>{m.last_tested_at ? new Date(m.last_tested_at).toLocaleString() : '—'}</td>
+        <td>{m.is_primary ? 'principal' : m.is_fallback ? 'fallback' : '—'}</td>
+      </tr>)}</tbody>
+    </table></div>
+    <div className="card-grid" style={{ marginTop: 18 }}>
+      {(data?.models || []).filter(m => m.type === 'local' || m.provider === 'Groq').map(m => (
+        <article className="entity-card" key={`${m.id}-note`}>
+          <div className="entity-title"><Sparkles size={22} /><div><h3>{m.provider}</h3><small>{m.model_id}</small></div></div>
+          <p>{m.notes || '—'}</p>
+          {m.type === 'local' && <div className="warning-banner">Modelo local de capacidad limitada. Solo para pruebas controladas y tareas en segundo plano.</div>}
+          {m.provider === 'Groq' && <div className="chips"><span>Cloud</span><span>Studio principal</span><span>Credenciales: {m.credentials_configured ? 'configuradas' : 'faltan'}</span></div>}
+        </article>
+      ))}
+    </div>
+  </section>
+}
+
+function UsagePage() {
+  const [days, setDays] = useState(14)
+  const [provider, setProvider] = useState('')
+  const [model, setModel] = useState('')
+  const { data, error } = useQuery({
+    queryKey: ['usage', days, provider, model],
+    queryFn: () => {
+      const params = new URLSearchParams({ days: String(days) })
+      if (provider) params.set('provider', provider)
+      if (model) params.set('model', model)
+      return api<UsageReport>(`/dashboard/usage?${params}`)
+    },
+  })
+  const s = data?.summary || {}
+  return <section className="panel">
+    <PageHeader eyebrow="ANALYTICS" title="Uso" subtitle="Métricas reales de chat, tokens, latencia y proveedores. Sin datos inventados." />
+    <div className="studio-toolbar">
+      <Select label="Período (días)" value={String(days)} onChange={e => setDays(Number(e.target.value))}>
+        <option value="7">7</option><option value="14">14</option><option value="30">30</option><option value="90">90</option>
+      </Select>
+      <Field label="Proveedor" value={provider} onChange={e => setProvider(e.target.value)} placeholder="Groq" />
+      <Field label="Modelo" value={model} onChange={e => setModel(e.target.value)} placeholder="llama-3.1-8b-instant" />
+    </div>
+    <ErrorBox error={error} />
+    {!data?.has_data && <div className="empty"><Activity size={40} /><p>{data?.message || 'No hay datos suficientes'}</p></div>}
+    {data?.has_data && <>
+      <div className="metric-grid">
+        <article className="metric"><span>Solicitudes hoy</span><strong>{s.requests_today ?? 0}</strong></article>
+        <article className="metric"><span>Chats activos 24h</span><strong>{s.chats_active_24h ?? 0}</strong></article>
+        <article className="metric"><span>Tokens total</span><strong>{s.total_tokens ?? 0}</strong></article>
+        <article className="metric"><span>Latencia media</span><strong>{s.avg_latency_ms != null ? `${s.avg_latency_ms} ms` : '—'}</strong></article>
+        <article className="metric"><span>p50 / p95</span><strong>{s.p50_latency_ms != null ? `${Math.round(Number(s.p50_latency_ms))}/${Math.round(Number(s.p95_latency_ms ?? 0))}` : '—'}</strong></article>
+        <article className="metric"><span>Errores</span><strong>{s.errors ?? 0}</strong></article>
+        <article className="metric"><span>Fallbacks</span><strong>{s.fallbacks ?? 0}</strong></article>
+        <article className="metric"><span>Tool calls</span><strong>{s.tool_calls ?? 0}</strong></article>
+        <article className="metric"><span>Memoria creada</span><strong>{s.memory_items_created ?? 0}</strong></article>
+        <article className="metric"><span>Proveedor principal</span><strong>{String(s.primary_provider || '—')}</strong></article>
+      </div>
+      <div className="chips" style={{ marginBottom: 12 }}>
+        <span>Modelo principal: {String(s.primary_model || '—')}</span>
+        <span>Costo estimado: {s.estimated_cost != null ? String(s.estimated_cost) : 'no configurado'}</span>
+        <span>Cuota: {s.quota_configured != null ? String(s.quota_configured) : 'no configurada'}</span>
+        <span>429: {s.errors_429 ?? 0}</span>
+        <span>5xx: {s.errors_5xx ?? 0}</span>
+      </div>
+      <div className="chart-grid">
+        <MiniChart title="Solicitudes / día" points={data.series.requests_per_day} />
+        <MiniChart title="Chats / día" points={data.series.chats_per_day} />
+        <MiniChart title="Tokens entrada" points={data.series.prompt_tokens_per_day} />
+        <MiniChart title="Tokens salida" points={data.series.completion_tokens_per_day} />
+        <MiniChart title="Latencia media" points={data.series.avg_latency_per_day} />
+        <MiniChart title="Errores / día" points={data.series.errors_per_day} />
+      </div>
+      <div className="split" style={{ marginTop: 18 }}>
+        <div className="panel" style={{ marginTop: 0 }}>
+          <h3>Por proveedor</h3>
+          <div className="table-wrap"><table><thead><tr><th>Proveedor</th><th>Requests</th></tr></thead><tbody>
+            {(data.breakdowns.by_provider || []).map(item => <tr key={item.name}><td>{item.name}</td><td>{item.value}</td></tr>)}
+          </tbody></table></div>
+        </div>
+        <div className="panel" style={{ marginTop: 0 }}>
+          <h3>Por modelo</h3>
+          <div className="table-wrap"><table><thead><tr><th>Modelo</th><th>Requests</th></tr></thead><tbody>
+            {(data.breakdowns.by_model || []).map(item => <tr key={item.name}><td>{item.name}</td><td>{item.value}</td></tr>)}
+          </tbody></table></div>
+        </div>
+      </div>
+    </>}
+  </section>
+}
+
 function StudioPage() {
   const { data: agents = [] } = useQuery({ queryKey: ['agents'], queryFn: () => api<Agent[]>('/agents') })
+  const { data: catalog } = useQuery({ queryKey: ['models-catalog'], queryFn: () => api<ModelCatalog>('/dashboard/models') })
   const [agentId, setAgentId] = useState('')
   const [endUserId, setEndUserId] = useState('demo-user')
   const [input, setInput] = useState('')
+  const [forceLocal, setForceLocal] = useState(false)
   const [history, setHistory] = useState<Array<{ role: string; content: string }>>([])
   const [conversationId, setConversationId] = useState<string>()
-  const [meta, setMeta] = useState<{ provider?: string; model?: string; memory?: number; knowledge?: number }>({})
+  const [meta, setMeta] = useState<{
+    provider?: string
+    model?: string
+    memory?: number
+    knowledge?: number
+    latency?: number
+    requestId?: string
+    fallback?: boolean
+    tokens?: number
+    errors?: string[]
+  }>({})
   const [feedbackTarget, setFeedbackTarget] = useState<{ conversationId: string; messageId: string }>()
+  const defaultModel = catalog?.default_model || 'llama-3.1-8b-instant'
+  const defaultProvider = catalog?.default_provider || 'groq'
   const feedback = useMutation({
     mutationFn: (rating: number) => api<Feedback>('/feedback', {
       method: 'POST',
@@ -205,7 +370,16 @@ function StudioPage() {
       const messages = [...history, { role: 'user', content: input }]
       return api<ChatResponse>('/chat/completions', {
         method: 'POST',
-        body: JSON.stringify({ agent_id: agentId || undefined, conversation_id: conversationId, end_user_id: endUserId || undefined, messages, stream: false, remember: true }),
+        body: JSON.stringify({
+          agent_id: agentId || undefined,
+          conversation_id: conversationId,
+          end_user_id: endUserId || undefined,
+          model: forceLocal ? undefined : defaultModel,
+          messages,
+          stream: false,
+          remember: true,
+          force_local: forceLocal || undefined,
+        }),
       })
     },
     onSuccess: result => {
@@ -214,21 +388,48 @@ function StudioPage() {
       setConversationId(result.conversation_id)
       setFeedbackTarget({ conversationId: result.conversation_id, messageId: result.assistant_message_id })
       feedback.reset()
-      setMeta({ provider: result.provider, model: result.model, memory: result.memory_hits, knowledge: result.knowledge_hits })
+      setMeta({
+        provider: result.provider,
+        model: result.model,
+        memory: result.memory_hits,
+        knowledge: result.knowledge_hits,
+        latency: result.latency_ms,
+        requestId: result.request_id,
+        fallback: result.fallback_used,
+        tokens: result.usage?.total_tokens,
+        errors: result.provider_errors,
+      })
       setInput('')
     },
   })
   return <section className="panel studio">
-    <PageHeader eyebrow="PLAYGROUND" title="Agent Studio" subtitle="Test the same API your other products will consume." />
+    <PageHeader eyebrow="PLAYGROUND" title="Agent Studio" subtitle="Groq por defecto. Ollama no se usa para chat productivo." />
+    <div className="chips" style={{ marginBottom: 12 }}>
+      <span>Proveedor por defecto: {defaultProvider}</span>
+      <span>Modelo por defecto: {defaultModel}</span>
+      <span>Ollama chat: deshabilitado para usuarios normales</span>
+    </div>
+    {forceLocal && <div className="warning-banner">Modelo local de capacidad limitada. Solo para pruebas controladas y tareas en segundo plano. Solo super_admin.</div>}
     <div className="studio-toolbar">
       <Select label="Agent" value={agentId} onChange={e => setAgentId(e.target.value)}><option value="">Default active agent</option>{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</Select>
       <Field label="External end-user ID" value={endUserId} onChange={e => setEndUserId(e.target.value)} />
+      <label className="checkbox-row"><input type="checkbox" checked={forceLocal} onChange={e => setForceLocal(e.target.checked)} /> Forzar Ollama (super_admin)</label>
       <button className="secondary" onClick={() => { setHistory([]); setConversationId(undefined); setFeedbackTarget(undefined); setMeta({}) }}>New conversation</button>
     </div>
     <div className="chat-log">{history.length === 0 && <div className="empty"><MessagesSquare size={40} /><p>Start a conversation. Memory and knowledge hits will appear below.</p></div>}{history.map((item, index) => <div key={index} className={`bubble ${item.role}`}><b>{item.role}</b><p>{item.content}</p></div>)}</div>
     <ErrorBox error={send.error} />
+    {!!meta.errors?.length && <div className="error">Provider errors: {meta.errors.join(' | ')}</div>}
     <form className="composer" onSubmit={e => { e.preventDefault(); if (input.trim()) send.mutate() }}><textarea value={input} onChange={e => setInput(e.target.value)} placeholder="Ask the agent..." /><button className="primary" disabled={send.isPending}>{send.isPending ? 'Thinking…' : 'Send'}</button></form>
-    <div className="run-meta"><span>Provider: {meta.provider || '—'}</span><span>Model: {meta.model || '—'}</span><span>Memory hits: {meta.memory ?? 0}</span><span>Knowledge hits: {meta.knowledge ?? 0}</span></div>
+    <div className="run-meta">
+      <span>Provider: {meta.provider || '—'}</span>
+      <span>Model: {meta.model || '—'}</span>
+      <span>Latency: {meta.latency != null ? `${meta.latency} ms` : '—'}</span>
+      <span>Request ID: {meta.requestId || '—'}</span>
+      <span>Fallback: {meta.fallback ? 'yes' : 'no'}</span>
+      <span>Tokens: {meta.tokens ?? 0}</span>
+      <span>Memory hits: {meta.memory ?? 0}</span>
+      <span>Knowledge hits: {meta.knowledge ?? 0}</span>
+    </div>
     {feedbackTarget && <div className="feedback-actions"><span>Was this response useful?</span><button className="secondary compact" onClick={() => feedback.mutate(1)} disabled={feedback.isPending}><ThumbsUp size={15} /> Yes</button><button className="secondary compact" onClick={() => feedback.mutate(-1)} disabled={feedback.isPending}><ThumbsDown size={15} /> No</button>{feedback.isSuccess && <small>Feedback saved for review.</small>}</div>}
   </section>
 }
@@ -395,6 +596,8 @@ function Protected() {
   if (!localStorage.getItem('access_token')) return <Navigate to="/login" replace />
   return <Layout><Routes>
     <Route path="/" element={<Overview />} />
+    <Route path="/models" element={<ModelsPage />} />
+    <Route path="/usage" element={<UsagePage />} />
     <Route path="/agents" element={<AgentsPage />} />
     <Route path="/studio" element={<StudioPage />} />
     <Route path="/memory" element={<MemoryPage />} />

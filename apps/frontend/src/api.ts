@@ -182,4 +182,57 @@ export type ChatResponse = {
   memory_hits: number
   knowledge_hits: number
   request_id: string
+  latency_ms?: number
+  fallback_used?: boolean
+  provider_errors?: string[]
+}
+
+export type ModelCatalogItem = {
+  id: string
+  provider: string
+  provider_kind: string
+  name: string
+  model_id: string
+  type: 'cloud' | 'local'
+  enabled: boolean
+  health: string
+  priority: number
+  usage_allowed: boolean
+  allowed_tasks: string[]
+  chat_allowed: boolean
+  embeddings_allowed: boolean
+  tool_calling: boolean
+  streaming: boolean
+  max_context?: number | null
+  recent_latency_ms?: number | null
+  error_count?: number
+  request_count?: number
+  last_tested_at?: string | null
+  is_primary?: boolean
+  is_fallback?: boolean
+  credentials_configured?: boolean
+  notes?: string
+  local_policy?: Record<string, unknown>
+}
+
+export type ModelCatalog = {
+  default_provider: string
+  default_model: string
+  allow_local_chat_fallback: boolean
+  models: ModelCatalogItem[]
+}
+
+export type UsagePoint = { date: string; value: number }
+export type UsageNamed = { name: string; value: number }
+
+export type UsageReport = {
+  has_data: boolean
+  message?: string | null
+  period_days: number
+  summary: Record<string, number | string | null | undefined>
+  series: Record<string, UsagePoint[]>
+  breakdowns: {
+    by_provider?: UsageNamed[]
+    by_model?: UsageNamed[]
+  }
 }

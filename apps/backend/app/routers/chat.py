@@ -125,6 +125,13 @@ async def chat_completions(
         )
     await db.commit()
 
+    force_local = bool(data.force_local)
+    if force_local and not (ctx.user and ctx.user.is_superuser):
+        raise HTTPException(
+            status_code=403,
+            detail="Only super_admin can force local Ollama for chat",
+        )
+
     started = time.perf_counter()
     try:
         run = await run_agent(
@@ -137,10 +144,13 @@ async def chat_completions(
             data.max_tokens,
             conversation_id=conversation.id,
             end_user_id=data.end_user_id or conversation.end_user_id,
+            force_local=force_local,
         )
     except ProviderError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     latency_ms = int((time.perf_counter() - started) * 1000)
+    fallback_used = bool(run.provider_errors)
+    usage_status = "fallback" if fallback_used else "success"
 
     tool_calls = [ToolCall(**call) for call in run.tool_calls]
     finish_reason = "tool_calls" if tool_calls and not run.provider_result.content else "stop"
@@ -168,6 +178,7 @@ async def chat_completions(
             total_tokens=int(usage.get("total_tokens", 0) or 0),
             latency_ms=latency_ms,
             request_id=getattr(request.state, "request_id", ""),
+            status=usage_status,
         )
     )
     await db.commit()
@@ -194,6 +205,9 @@ async def chat_completions(
         memory_hits=run.memory_hits,
         knowledge_hits=run.knowledge_hits,
         request_id=getattr(request.state, "request_id", ""),
+        latency_ms=latency_ms,
+        fallback_used=fallback_used,
+        provider_errors=run.provider_errors,
     )
     if not data.stream:
         return response

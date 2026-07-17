@@ -39,20 +39,40 @@ async def _create_admin(email: str, password: str, organization: str):
         )
         db.add(user)
         await db.flush()
-        db.add(Membership(organization_id=org.id, user_id=user.id, role=Role.organization_owner))
+        db.add(Membership(organization_id=org.id, user_id=user.id, role=Role.super_admin))
         await db.commit()
         typer.echo(f"Created administrator {email} for organization {organization} ({org.id})")
 
 
 @app.command("create-admin")
 def create_admin(
-    email: str = typer.Option(...),
-    password: str = typer.Option(...),
-    organization: str = typer.Option("CodeMorf"),
+    email: str = typer.Option(..., "--email"),
+    password: str = typer.Option(..., "--password"),
+    organization: str = typer.Option("CodeMorf", "--organization"),
 ):
+    """Create the first platform administrator (superuser)."""
     if len(password) < 12:
         raise typer.BadParameter("Password must contain at least 12 characters")
     asyncio.run(_create_admin(email, password, organization))
+
+
+# Typer with a single command flattens to root options. Support both:
+#   python -m app.cli create-admin --email ... --password ...
+#   python -m app.cli --email ... --password ...
+@app.callback(invoke_without_command=True)
+def _root(
+    ctx: typer.Context,
+    email: str | None = typer.Option(None, "--email"),
+    password: str | None = typer.Option(None, "--password"),
+    organization: str = typer.Option("CodeMorf", "--organization"),
+):
+    if ctx.invoked_subcommand is not None:
+        return
+    if email and password:
+        create_admin(email=email, password=password, organization=organization)
+        return
+    typer.echo(ctx.get_help())
+    raise typer.Exit(code=0)
 
 
 if __name__ == "__main__":
