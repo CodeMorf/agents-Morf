@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     # Phase 2: public company self-registration (staging can enable; prod may disable)
     allow_public_registration: bool = True
     registration_default_plan: str = "trial"
+    # When true (staging), forgot-password / invite responses may include one-time tokens
+    # because outbound email is not wired yet. Never enable on public internet long-term.
+    return_auth_tokens_in_response: bool = True
+    password_reset_expire_minutes: int = 60
+    invite_expire_hours: int = 72
 
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1"

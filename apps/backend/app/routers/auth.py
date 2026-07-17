@@ -1,5 +1,6 @@
 import re
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,21 +13,43 @@ from app.core.security import (
     create_access_token,
     create_refresh_token,
     decode_token,
+    generate_opaque_token,
+    hash_api_key,
     hash_password,
     verify_password,
 )
 from app.dependencies import get_current_user
-from app.models import Membership, Organization, Role, User
+from app.models import (
+    Membership,
+    Organization,
+    OrganizationInvite,
+    PasswordResetToken,
+    Role,
+    User,
+)
 from app.schemas import (
+    AcceptInviteRequest,
+    ForgotPasswordRequest,
+    ForgotPasswordResponse,
     LoginRequest,
     RefreshRequest,
     RegisterRequest,
     RegisterResponse,
+    ResetPasswordRequest,
     TokenPair,
     UserOut,
 )
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+
+def _aware(dt: datetime | None) -> datetime | None:
+    """Normalize SQLite-naive timestamps to UTC-aware for safe comparison."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt
 
 
 def _slugify(value: str) -> str:
@@ -118,6 +141,124 @@ async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
     return TokenPair(
         access_token=create_access_token(str(user.id)),
         refresh_token=create_refresh_token(str(user.id)),
+    )
+
+
+@router.post("/forgot-password", response_model=ForgotPasswordResponse)
+async def forgot_password(data: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
+    """Always returns a generic message to avoid email enumeration.
+
+    When return_auth_tokens_in_response is true (staging), includes reset_token
+    if the user exists — SMTP is not required for Phase 2 slice 2.
+    """
+    generic = ForgotPasswordResponse(
+        message="If an account exists for that email, a reset token has been issued."
+    )
+    user = (
+        await db.execute(select(User).where(func.lower(User.email) == data.email.lower()))
+    ).scalar_one_or_none()
+    if not user or not user.is_active:
+        return generic
+
+    raw, token_hash = generate_opaque_token("rst")
+    db.add(
+        PasswordResetToken(
+            user_id=user.id,
+            token_hash=token_hash,
+            expires_at=datetime.now(UTC)
+            + timedelta(minutes=settings.password_reset_expire_minutes),
+        )
+    )
+    await db.commit()
+    if settings.return_auth_tokens_in_response:
+        return ForgotPasswordResponse(message=generic.message, reset_token=raw)
+    return generic
+
+
+@router.post("/reset-password")
+async def reset_password(data: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
+    token_hash = hash_api_key(data.token)
+    row = (
+        await db.execute(
+            select(PasswordResetToken).where(PasswordResetToken.token_hash == token_hash)
+        )
+    ).scalar_one_or_none()
+    now = datetime.now(UTC)
+    if not row or row.used_at or _aware(row.expires_at) <= now:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    user = await db.get(User, row.user_id)
+    if not user or not user.is_active:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    user.password_hash = hash_password(data.password)
+    row.used_at = now
+    await db.commit()
+    return {"message": "Password updated successfully"}
+
+
+@router.post("/accept-invite", response_model=RegisterResponse)
+async def accept_invite(data: AcceptInviteRequest, db: AsyncSession = Depends(get_db)):
+    """Accept an organization invite and set password for a new or existing user."""
+    token_hash = hash_api_key(data.token)
+    invite = (
+        await db.execute(
+            select(OrganizationInvite).where(OrganizationInvite.token_hash == token_hash)
+        )
+    ).scalar_one_or_none()
+    now = datetime.now(UTC)
+    if (
+        not invite
+        or invite.revoked_at
+        or invite.accepted_at
+        or _aware(invite.expires_at) <= now
+    ):
+        raise HTTPException(status_code=400, detail="Invalid or expired invite")
+
+    org = await db.get(Organization, invite.organization_id)
+    if not org or org.status != "active":
+        raise HTTPException(status_code=400, detail="Organization unavailable")
+
+    email = invite.email.lower()
+    user = (
+        await db.execute(select(User).where(func.lower(User.email) == email))
+    ).scalar_one_or_none()
+    if not user:
+        user = User(
+            email=email,
+            full_name=(data.full_name or "").strip() or email.split("@")[0],
+            password_hash=hash_password(data.password),
+            is_active=True,
+            is_superuser=False,
+        )
+        db.add(user)
+        await db.flush()
+    else:
+        user.password_hash = hash_password(data.password)
+        if data.full_name.strip():
+            user.full_name = data.full_name.strip()
+        user.is_active = True
+
+    membership = (
+        await db.execute(
+            select(Membership).where(
+                Membership.organization_id == org.id, Membership.user_id == user.id
+            )
+        )
+    ).scalar_one_or_none()
+    if not membership:
+        db.add(Membership(organization_id=org.id, user_id=user.id, role=invite.role))
+    else:
+        membership.role = invite.role
+
+    invite.accepted_at = now
+    await db.commit()
+    await db.refresh(user)
+    await db.refresh(org)
+    return RegisterResponse(
+        access_token=create_access_token(str(user.id)),
+        refresh_token=create_refresh_token(str(user.id)),
+        user=user,
+        organization=org,
+        message="Invite accepted. You are now a member of the organization.",
     )
 
 

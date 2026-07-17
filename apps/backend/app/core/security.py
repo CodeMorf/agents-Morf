@@ -60,6 +60,12 @@ def constant_time_key_match(raw: str, stored_hash: str) -> bool:
     return hmac.compare_digest(hash_api_key(raw), stored_hash)
 
 
+def generate_opaque_token(prefix: str = "tok") -> tuple[str, str]:
+    """Return (raw_token, token_hash) for password reset / invites."""
+    raw = f"{prefix}_{secrets.token_urlsafe(32)}"
+    return raw, hash_api_key(raw)
+
+
 def _fernet() -> Fernet | None:
     if not settings.encryption_key:
         return None

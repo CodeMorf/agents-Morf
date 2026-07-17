@@ -21,6 +21,7 @@ import {
   ThumbsDown,
   ThumbsUp,
   MessageCircleWarning,
+  Users,
   Wrench,
 } from 'lucide-react'
 import {
@@ -89,11 +90,108 @@ function Login() {
         {error && <div className="error">{error}</div>}
         <button className="primary">Sign in</button>
       </form>
-      <p className="muted" style={{ marginTop: 16, textAlign: 'center' }}>
+      <p className="muted" style={{ marginTop: 12, textAlign: 'center' }}>
+        <a href="/forgot-password" style={{ color: '#91a8b8' }}>¿Olvidaste tu contraseña?</a>
+      </p>
+      <p className="muted" style={{ marginTop: 8, textAlign: 'center' }}>
         ¿Empresa nueva? <a href="/register" style={{ color: '#35eddb' }}>Registrar organización</a>
       </p>
     </section>
   </main>
+}
+
+function ForgotPassword() {
+  const [email, setEmail] = useState('')
+  const [message, setMessage] = useState('')
+  const [token, setToken] = useState('')
+  const [error, setError] = useState('')
+  async function submit(e: React.FormEvent) {
+    e.preventDefault(); setError(''); setMessage(''); setToken('')
+    try {
+      const res = await api<{ message: string; reset_token?: string }>('/auth/forgot-password', {
+        method: 'POST', body: JSON.stringify({ email }),
+      })
+      setMessage(res.message)
+      if (res.reset_token) setToken(res.reset_token)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error')
+    }
+  }
+  return <main className="login-shell"><section className="login-card">
+    <p className="eyebrow">RECUPERACIÓN</p>
+    <h1>Restablecer contraseña</h1>
+    <p className="muted">Te emitiremos un token de un solo uso (en staging se muestra aquí porque aún no hay email SMTP).</p>
+    <form onSubmit={submit} className="stack">
+      <Field label="Email" type="email" value={email} onChange={e => setEmail(e.target.value)} required />
+      {error && <div className="error">{error}</div>}
+      {message && <div className="secret-box"><b>{message}</b>{token && <><code>{token}</code><a className="primary compact" href={`/reset-password?token=${encodeURIComponent(token)}`}>Continuar</a></>}</div>}
+      <button className="primary">Solicitar reset</button>
+    </form>
+    <p className="muted" style={{ marginTop: 16, textAlign: 'center' }}><a href="/login" style={{ color: '#35eddb' }}>Volver al login</a></p>
+  </section></main>
+}
+
+function ResetPassword() {
+  const navigate = useNavigate()
+  const params = new URLSearchParams(window.location.search)
+  const [token, setToken] = useState(params.get('token') || '')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [ok, setOk] = useState(false)
+  async function submit(e: React.FormEvent) {
+    e.preventDefault(); setError('')
+    try {
+      await api('/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, password }) })
+      setOk(true)
+      setTimeout(() => navigate('/login'), 1500)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error')
+    }
+  }
+  return <main className="login-shell"><section className="login-card">
+    <p className="eyebrow">NUEVA CONTRASEÑA</p>
+    <h1>Definir contraseña</h1>
+    <form onSubmit={submit} className="stack">
+      <Field label="Token" value={token} onChange={e => setToken(e.target.value)} required />
+      <Field label="Nueva contraseña (mín. 12)" type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={12} />
+      {error && <div className="error">{error}</div>}
+      {ok && <div className="secret-box"><b>Contraseña actualizada. Redirigiendo al login…</b></div>}
+      <button className="primary">Guardar</button>
+    </form>
+  </section></main>
+}
+
+function AcceptInvite() {
+  const navigate = useNavigate()
+  const params = new URLSearchParams(window.location.search)
+  const [token, setToken] = useState(params.get('token') || '')
+  const [fullName, setFullName] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  async function submit(e: React.FormEvent) {
+    e.preventDefault(); setError('')
+    try {
+      const res = await api<{ access_token: string; organization: Organization }>('/auth/accept-invite', {
+        method: 'POST', body: JSON.stringify({ token, password, full_name: fullName }),
+      })
+      localStorage.setItem('access_token', res.access_token)
+      if (res.organization?.id) localStorage.setItem('organization_id', res.organization.id)
+      navigate('/')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error')
+    }
+  }
+  return <main className="login-shell"><section className="login-card">
+    <p className="eyebrow">INVITACIÓN</p>
+    <h1>Unirse a la organización</h1>
+    <form onSubmit={submit} className="stack">
+      <Field label="Token de invitación" value={token} onChange={e => setToken(e.target.value)} required />
+      <Field label="Tu nombre" value={fullName} onChange={e => setFullName(e.target.value)} />
+      <Field label="Contraseña (mín. 12)" type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={12} />
+      {error && <div className="error">{error}</div>}
+      <button className="primary">Aceptar invitación</button>
+    </form>
+  </section></main>
 }
 
 function Register() {
@@ -180,6 +278,7 @@ const nav = [
   ['/tools', 'Tools', Wrench],
   ['/providers', 'Providers', Network],
   ['/api-keys', 'API keys', KeyRound],
+  ['/members', 'Members', Users],
   ['/docs', 'API docs', BookOpen],
   ['/settings', 'Settings', Settings],
 ] as const
@@ -821,6 +920,101 @@ console.log(data.provider, data.model, data.choices?.[0]?.message?.content);`, [
   </section>
 }
 
+type Member = {
+  membership_id: string
+  user_id: string
+  email: string
+  full_name: string
+  role: string
+  is_active: boolean
+  created_at: string
+}
+type Invite = {
+  id: string
+  email: string
+  role: string
+  expires_at: string
+  invite_token?: string | null
+}
+
+function MembersPage() {
+  const queryClient = useQueryClient()
+  const { data: members = [], error } = useQuery({ queryKey: ['members'], queryFn: () => api<Member[]>('/members') })
+  const { data: invites = [] } = useQuery({ queryKey: ['invites'], queryFn: () => api<Invite[]>('/members/invites') })
+  const [email, setEmail] = useState('')
+  const [role, setRole] = useState('developer')
+  const [fullName, setFullName] = useState('')
+  const [lastToken, setLastToken] = useState('')
+  const invite = useMutation({
+    mutationFn: () => api<Invite>('/members/invites', { method: 'POST', body: JSON.stringify({ email, role, full_name: fullName }) }),
+    onSuccess: res => {
+      setLastToken(res.invite_token || '')
+      setEmail(''); setFullName('')
+      queryClient.invalidateQueries({ queryKey: ['invites'] })
+    },
+  })
+  const revokeInvite = useMutation({
+    mutationFn: (id: string) => api<void>(`/members/invites/${id}`, { method: 'DELETE' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['invites'] }),
+  })
+  const changeRole = useMutation({
+    mutationFn: ({ id, role }: { id: string; role: string }) => api<Member>(`/members/${id}`, { method: 'PATCH', body: JSON.stringify({ role }) }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['members'] }),
+  })
+  const remove = useMutation({
+    mutationFn: (id: string) => api<void>(`/members/${id}`, { method: 'DELETE' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['members'] }),
+  })
+  return <section className="panel">
+    <PageHeader eyebrow="ORGANIZATION" title="Members & invites" subtitle="Invita usuarios, asigna roles y revoca accesos. Sin shell del servidor." />
+    <form className="form-grid create-box" onSubmit={e => { e.preventDefault(); invite.mutate() }}>
+      <Field label="Email" type="email" value={email} onChange={e => setEmail(e.target.value)} required />
+      <Field label="Nombre" value={fullName} onChange={e => setFullName(e.target.value)} />
+      <Select label="Rol" value={role} onChange={e => setRole(e.target.value)}>
+        <option value="organization_admin">organization_admin</option>
+        <option value="developer">developer</option>
+        <option value="operator">operator</option>
+        <option value="viewer">viewer</option>
+      </Select>
+      <button className="primary compact"><Plus size={16} /> Invitar</button>
+    </form>
+    {lastToken && <div className="secret-box">
+      <b>Token de invitación (staging — cópialo ahora)</b>
+      <code>{lastToken}</code>
+      <a className="secondary compact" href={`/accept-invite?token=${encodeURIComponent(lastToken)}`}>Abrir aceptación</a>
+    </div>}
+    <ErrorBox error={error || invite.error || revokeInvite.error || changeRole.error || remove.error} />
+    <h3>Miembros</h3>
+    <div className="table-wrap"><table><thead><tr><th>Email</th><th>Nombre</th><th>Rol</th><th>Estado</th><th></th></tr></thead><tbody>
+      {members.map(m => <tr key={m.membership_id}>
+        <td><b>{m.email}</b></td>
+        <td>{m.full_name || '—'}</td>
+        <td>
+          <select value={m.role} onChange={e => changeRole.mutate({ id: m.membership_id, role: e.target.value })}>
+            <option value="organization_owner">organization_owner</option>
+            <option value="organization_admin">organization_admin</option>
+            <option value="developer">developer</option>
+            <option value="operator">operator</option>
+            <option value="viewer">viewer</option>
+          </select>
+        </td>
+        <td>{m.is_active ? 'active' : 'inactive'}</td>
+        <td><button className="secondary compact" onClick={() => { if (confirm(`Quitar a ${m.email}?`)) remove.mutate(m.membership_id) }}>Remove</button></td>
+      </tr>)}
+    </tbody></table></div>
+    <h3 style={{ marginTop: 24 }}>Invitaciones pendientes</h3>
+    <div className="table-wrap"><table><thead><tr><th>Email</th><th>Rol</th><th>Expira</th><th></th></tr></thead><tbody>
+      {invites.map(i => <tr key={i.id}>
+        <td>{i.email}</td>
+        <td>{i.role}</td>
+        <td>{new Date(i.expires_at).toLocaleString()}</td>
+        <td><button className="secondary compact" onClick={() => revokeInvite.mutate(i.id)}>Revoke</button></td>
+      </tr>)}
+      {invites.length === 0 && <tr><td colSpan={4} className="muted">No hay invitaciones abiertas</td></tr>}
+    </tbody></table></div>
+  </section>
+}
+
 function SettingsPage() {
   return <section className="panel">
     <PageHeader eyebrow="PLATFORM BOUNDARY" title="Architecture settings" subtitle="Agents Morf is the AI control plane, not the operational backend of every product." />
@@ -845,6 +1039,7 @@ function Protected() {
     <Route path="/tools" element={<ToolsPage />} />
     <Route path="/providers" element={<ProvidersPage />} />
     <Route path="/api-keys" element={<ApiKeysPage />} />
+    <Route path="/members" element={<MembersPage />} />
     <Route path="/docs" element={<DocsPage />} />
     <Route path="/settings" element={<SettingsPage />} />
     <Route path="*" element={<Navigate to="/" />} />
@@ -855,6 +1050,9 @@ export default function App() {
   return <Routes>
     <Route path="/login" element={<Login />} />
     <Route path="/register" element={<Register />} />
+    <Route path="/forgot-password" element={<ForgotPassword />} />
+    <Route path="/reset-password" element={<ResetPassword />} />
+    <Route path="/accept-invite" element={<AcceptInvite />} />
     <Route path="/*" element={<Protected />} />
   </Routes>
 }

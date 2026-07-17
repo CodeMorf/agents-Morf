@@ -42,6 +42,68 @@ class RegisterResponse(BaseModel):
     message: str = "Organization registered successfully"
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ForgotPasswordResponse(BaseModel):
+    message: str
+    reset_token: str | None = None  # only when return_auth_tokens_in_response
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=10)
+    password: str = Field(min_length=12, max_length=128)
+
+
+class AcceptInviteRequest(BaseModel):
+    token: str = Field(min_length=10)
+    password: str = Field(min_length=12, max_length=128)
+    full_name: str = Field(default="", max_length=160)
+
+
+class MemberInviteRequest(BaseModel):
+    email: EmailStr
+    role: Literal[
+        "organization_admin",
+        "developer",
+        "operator",
+        "viewer",
+    ] = "developer"
+    full_name: str = Field(default="", max_length=160)
+
+
+class MemberRoleUpdate(BaseModel):
+    role: Literal[
+        "organization_owner",
+        "organization_admin",
+        "developer",
+        "operator",
+        "viewer",
+    ]
+
+
+class MemberOut(BaseModel):
+    membership_id: uuid.UUID
+    user_id: uuid.UUID
+    email: EmailStr
+    full_name: str
+    role: str
+    is_active: bool
+    created_at: datetime
+
+
+class InviteOut(BaseModel):
+    id: uuid.UUID
+    email: EmailStr
+    role: str
+    expires_at: datetime
+    accepted_at: datetime | None
+    revoked_at: datetime | None
+    created_at: datetime
+    invite_token: str | None = None  # only on create when tokens returned
+
+
 class RefreshRequest(BaseModel):
     refresh_token: str
 

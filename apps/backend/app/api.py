@@ -14,6 +14,7 @@ from app.routers import (
     dashboard,
     feedback,
     knowledge,
+    members,
     memory,
     organizations,
     providers,
@@ -105,6 +106,7 @@ async def ready(db: AsyncSession = Depends(get_db)):
 for subrouter in [
     auth.router,
     organizations.router,
+    members.router,
     dashboard.router,
     feedback.router,
     agents.router,
