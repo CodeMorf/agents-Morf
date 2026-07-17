@@ -1022,6 +1022,22 @@ console.log(data.provider, data.model, data.choices?.[0]?.message?.content);`, [
       <p className="muted">Flujo: plantilla global → install → draft → prueba en Terminal → publish. “Preentrenado” = prompts/tools/guardrails/ejemplos, no fine-tuning de pesos.</p>
     </div>
 
+    <div className="create-box">
+      <h3 style={{ marginTop: 0 }}>Tools de plataforma (todos los agentes)</h3>
+      <p className="muted">Se ejecutan en Agents Morf — no requieren backend del cliente:</p>
+      <div className="chips">
+        <span>platform.web_search</span>
+        <span>platform.fetch_url</span>
+        <span>platform.search_knowledge</span>
+        <span>platform.recall_memory</span>
+        <span>platform.current_datetime</span>
+        <span>platform.calculate</span>
+        <span>platform.summarize_capabilities</span>
+      </div>
+      <p className="muted" style={{ marginTop: 10 }}>
+        En el chat del panel (<code>runtime=studio</code>) el agente puede buscar en la web y leer páginas HTTPS públicas.
+      </p>
+    </div>
     <div className="chips" style={{ margin: '16px 0' }}>
       <span>Auth: Bearer am_… (API key) o JWT de dashboard</span>
       <span>Header opcional: X-Organization-ID</span>

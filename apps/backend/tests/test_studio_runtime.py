@@ -26,3 +26,11 @@ def test_simulate_sales_price():
     result = simulate_client_tool_result("sales.check_price", {"product_id": "p1"})
     assert result["simulated"] is True
     assert result["price"] == 49.99
+
+
+def test_web_search_in_builtins():
+    from app.services.builtin_tools import builtin_tool_definitions
+
+    names = {d["name"] for d in builtin_tool_definitions()}
+    assert "platform.web_search" in names
+    assert "platform.fetch_url" in names

@@ -293,10 +293,11 @@ export function ChatWorkspace() {
               </p>
               <div className="gpt-suggestions">
                 {[
-                  '¿Qué puedes hacer ahora? Usa platform.summarize_capabilities',
-                  '¿Qué hora es en UTC? Usa la tool de fecha',
+                  '¿Qué puedes hacer ahora?',
+                  'Busca en internet: noticias de IA esta semana',
+                  'Busca en la web qué es Agents Morf / multi-agent OS',
                   'Calcula 15% de comisión sobre 2400',
-                  'Busca en knowledge y memoria lo de mi empresa',
+                  '¿Qué hora es en UTC?',
                   'Simula una cotización de venta del plan Pro',
                 ].map(s => (
                   <button type="button" key={s} className="secondary compact" onClick={() => setInput(s)}>

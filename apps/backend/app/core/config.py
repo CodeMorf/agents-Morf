@@ -87,6 +87,11 @@ class Settings(BaseSettings):
     tool_allowed_hosts: list[str] | str = Field(default_factory=list)
     tool_allow_http: bool = False
     tool_allow_private_networks: bool = False
+    # Platform web search (all agents). Uses DuckDuckGo by default (no key).
+    web_search_enabled: bool = True
+    web_search_max_results: int = 6
+    web_fetch_enabled: bool = True
+    web_fetch_max_chars: int = 8000
 
     @field_validator("cors_origins", "tool_allowed_hosts", mode="before")
     @classmethod

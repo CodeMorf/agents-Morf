@@ -1,20 +1,27 @@
 """Platform-native tools that Agents Morf can execute itself (safe, multi-tenant).
 
-These make the dashboard feel like a real agent: search knowledge, recall memory,
-datetime, calculator — without calling the customer's business backend.
+Available to EVERY agent: knowledge, memory, datetime, calculator, web search,
+fetch public URL — without calling the customer's business backend.
 """
 
 from __future__ import annotations
 
 import ast
+import asyncio
+import html
+import ipaddress
 import operator
 import re
+import socket
 import uuid
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
+import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.services.knowledge import search_knowledge
 from app.services.memory import search_memory
 
@@ -32,7 +39,7 @@ _UNARY = {ast.UAdd: operator.pos, ast.USub: operator.neg}
 
 
 def builtin_tool_definitions() -> list[dict[str, Any]]:
-    return [
+    tools = [
         {
             "name": "platform.search_knowledge",
             "description": (
@@ -62,6 +69,38 @@ def builtin_tool_definitions() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "platform.web_search",
+            "description": (
+                "Busca en Internet (web pública). Úsala para noticias, precios públicos, "
+                "documentación, hechos actuales, empresas, clima general, tutoriales. "
+                "Disponible para TODOS los agentes. Resume citando títulos/URLs de los resultados."
+            ),
+            "execution_mode": "server",
+            "requires_approval": False,
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "max_results": {"type": "integer"},
+                },
+                "required": ["query"],
+            },
+        },
+        {
+            "name": "platform.fetch_url",
+            "description": (
+                "Lee el texto de una URL pública HTTPS (artículo, docs, página). "
+                "No usa la red interna del VPS. Úsala tras web_search para profundizar."
+            ),
+            "execution_mode": "server",
+            "requires_approval": False,
+            "input_schema": {
+                "type": "object",
+                "properties": {"url": {"type": "string"}},
+                "required": ["url"],
+            },
+        },
+        {
             "name": "platform.current_datetime",
             "description": "Obtiene fecha y hora actuales (UTC y opcional timezone IANA).",
             "execution_mode": "server",
@@ -86,14 +125,19 @@ def builtin_tool_definitions() -> list[dict[str, Any]]:
         {
             "name": "platform.summarize_capabilities",
             "description": (
-                "Lista qué puede hacer este agente ahora: tools de plataforma, tools del cliente "
-                "y si están en modo demo/studio."
+                "Lista qué puede hacer este agente ahora: tools de plataforma (incl. web), "
+                "tools del cliente y modo studio/api."
             ),
             "execution_mode": "server",
             "requires_approval": False,
             "input_schema": {"type": "object", "properties": {}, "required": []},
         },
     ]
+    if not settings.web_search_enabled:
+        tools = [t for t in tools if t["name"] != "platform.web_search"]
+    if not settings.web_fetch_enabled:
+        tools = [t for t in tools if t["name"] != "platform.fetch_url"]
+    return tools
 
 
 def format_builtin_tools_prompt(extra_client_tools: list[str] | None = None) -> str:
@@ -101,8 +145,10 @@ def format_builtin_tools_prompt(extra_client_tools: list[str] | None = None) -> 
     lines = [
         "You are an OPERATIONAL AI agent, not a passive chatbot.",
         "When the user asks for facts from knowledge/memory, CALL a tool instead of inventing.",
+        "When the user asks about the live web, news, public info, or anything current, "
+        "CALL platform.web_search (and platform.fetch_url if you need the page body).",
         "When you need time/math, CALL platform tools.",
-        "After tool results, give a clear natural-language answer.",
+        "After tool results, give a clear natural-language answer with sources when from web.",
         "Never claim a customer business action (order, payment, reservation, email) succeeded "
         "unless a tool_result confirms it.",
         "If a business tool is only available on the client and you are in studio demo, "
@@ -110,7 +156,7 @@ def format_builtin_tools_prompt(extra_client_tools: list[str] | None = None) -> 
         "Respond with ONLY one JSON object when calling a tool:",
         '{"type":"tool_call","tool":"tool_name","arguments":{},"reason":"short reason"}',
         "Otherwise answer in natural language.",
-        "PLATFORM TOOLS (executed by Agents Morf):",
+        "PLATFORM TOOLS (executed by Agents Morf for ALL agents):",
     ]
     for d in defs:
         lines.append(f"- {d['name']}: {d['description']}")
@@ -138,6 +184,275 @@ def _safe_eval(expr: str) -> float | int:
     return _eval(tree)
 
 
+def _strip_html(raw: str) -> str:
+    text = re.sub(r"(?is)<script[^>]*>.*?</script>", " ", raw)
+    text = re.sub(r"(?is)<style[^>]*>.*?</style>", " ", text)
+    text = re.sub(r"(?is)<[^>]+>", " ", text)
+    text = html.unescape(text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+async def _assert_public_https(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise ValueError("Only HTTPS public URLs are allowed")
+    host = (parsed.hostname or "").lower()
+    if not host or host in {"localhost", "localhost.localdomain"} or host.endswith(".local"):
+        raise ValueError("Local hosts are not allowed")
+    try:
+        infos = await asyncio.to_thread(socket.getaddrinfo, host, 443)
+    except socket.gaierror as exc:
+        raise ValueError("Unable to resolve host") from exc
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            raise ValueError("Private or reserved destinations are blocked")
+    return url
+
+
+async def web_search(query: str, max_results: int | None = None) -> dict[str, Any]:
+    """Public web search for ALL agents (DuckDuckGo + Wikipedia fallbacks, no API key)."""
+    if not settings.web_search_enabled:
+        return {"error": "web_search disabled", "results": []}
+    q = (query or "").strip()
+    if not q:
+        return {"error": "query required", "results": []}
+    if len(q) > 300:
+        q = q[:300]
+    limit = max(1, min(int(max_results or settings.web_search_max_results), 10))
+    results: list[dict[str, str]] = []
+    abstract = ""
+    providers_used: list[str] = []
+    errors: list[str] = []
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (compatible; AgentsMorfBot/0.2; +https://agent.codemorf.tech)"
+        )
+    }
+
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, headers=headers) as client:
+        # 1) DuckDuckGo Instant Answer
+        try:
+            r = await client.get(
+                "https://api.duckduckgo.com/",
+                params={"q": q, "format": "json", "no_html": "1", "skip_disambig": "1"},
+            )
+            if r.status_code < 400:
+                data = r.json()
+                abstract = (data.get("AbstractText") or "").strip()
+                if data.get("AbstractURL") and (abstract or data.get("Heading")):
+                    results.append(
+                        {
+                            "title": data.get("Heading") or q,
+                            "url": data["AbstractURL"],
+                            "snippet": abstract[:500] or (data.get("Heading") or ""),
+                            "source": "duckduckgo_abstract",
+                        }
+                    )
+                    providers_used.append("duckduckgo_instant")
+                for topic in data.get("RelatedTopics") or []:
+                    if len(results) >= limit:
+                        break
+                    nodes = []
+                    if isinstance(topic, dict) and topic.get("FirstURL"):
+                        nodes = [topic]
+                    elif isinstance(topic, dict) and topic.get("Topics"):
+                        nodes = topic["Topics"]
+                    for sub in nodes:
+                        if len(results) >= limit:
+                            break
+                        if sub.get("FirstURL"):
+                            results.append(
+                                {
+                                    "title": (sub.get("Text") or "")[:120],
+                                    "url": sub["FirstURL"],
+                                    "snippet": (sub.get("Text") or "")[:400],
+                                    "source": "duckduckgo_related",
+                                }
+                            )
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"ddg_instant:{exc}")
+
+        # 2) DuckDuckGo HTML (GET + POST)
+        if len(results) < limit:
+            for method, kwargs in (
+                ("GET", {"params": {"q": q}}),
+                ("POST", {"data": {"q": q}}),
+            ):
+                if len(results) >= limit:
+                    break
+                try:
+                    html_r = await client.request(
+                        method, "https://html.duckduckgo.com/html/", **kwargs
+                    )
+                    if html_r.status_code >= 400:
+                        continue
+                    body = html_r.text
+                    found_here = 0
+                    for m in re.finditer(
+                        r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
+                        body,
+                        flags=re.I | re.S,
+                    ):
+                        if len(results) >= limit:
+                            break
+                        href = html.unescape(m.group(1))
+                        title = _strip_html(m.group(2))[:200]
+                        if "uddg=" in href:
+                            qs = parse_qs(urlparse(href).query)
+                            if qs.get("uddg"):
+                                href = unquote(qs["uddg"][0])
+                        if not href.startswith("http"):
+                            continue
+                        results.append(
+                            {
+                                "title": title or href,
+                                "url": href,
+                                "snippet": "",
+                                "source": f"duckduckgo_html_{method.lower()}",
+                            }
+                        )
+                        found_here += 1
+                    snippets = re.findall(
+                        r'class="result__snippet"[^>]*>(.*?)</(?:a|td|div)',
+                        body,
+                        flags=re.I | re.S,
+                    )
+                    # attach snippets to last found_here items approximately
+                    for i, sn in enumerate(snippets[:found_here]):
+                        idx = len(results) - found_here + i
+                        if 0 <= idx < len(results) and not results[idx].get("snippet"):
+                            results[idx]["snippet"] = _strip_html(sn)[:400]
+                    if found_here:
+                        providers_used.append(f"duckduckgo_html_{method.lower()}")
+                        break
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"ddg_html_{method}:{exc}")
+
+        # 3) Wikipedia OpenSearch (es + en) — reliable public fallback
+        if len(results) < max(2, limit // 2):
+            for wiki in ("es.wikipedia.org", "en.wikipedia.org"):
+                if len(results) >= limit:
+                    break
+                try:
+                    wr = await client.get(
+                        f"https://{wiki}/w/api.php",
+                        params={
+                            "action": "opensearch",
+                            "search": q,
+                            "limit": limit,
+                            "namespace": 0,
+                            "format": "json",
+                        },
+                    )
+                    if wr.status_code >= 400:
+                        continue
+                    data = wr.json()
+                    # [query, titles[], descriptions[], urls[]]
+                    titles = data[1] if len(data) > 1 else []
+                    descs = data[2] if len(data) > 2 else []
+                    urls = data[3] if len(data) > 3 else []
+                    for i, title in enumerate(titles):
+                        if len(results) >= limit:
+                            break
+                        results.append(
+                            {
+                                "title": title,
+                                "url": urls[i] if i < len(urls) else "",
+                                "snippet": descs[i] if i < len(descs) else "",
+                                "source": f"wikipedia_{wiki.split('.')[0]}",
+                            }
+                        )
+                    if titles:
+                        providers_used.append(f"wikipedia_{wiki.split('.')[0]}")
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"wikipedia_{wiki}:{exc}")
+
+        # 4) Wikipedia REST summary for first title if still thin abstract
+        if not abstract and results:
+            try:
+                first = results[0]
+                if "wikipedia.org" in (first.get("url") or ""):
+                    title = first.get("title") or ""
+                    lang = "es" if "es.wikipedia" in first["url"] else "en"
+                    sr = await client.get(
+                        f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{quote_plus(title)}"
+                    )
+                    if sr.status_code < 400:
+                        js = sr.json()
+                        abstract = (js.get("extract") or "")[:800]
+                        if js.get("content_urls", {}).get("desktop", {}).get("page"):
+                            first["url"] = js["content_urls"]["desktop"]["page"]
+                        if abstract and not first.get("snippet"):
+                            first["snippet"] = abstract[:400]
+                        providers_used.append("wikipedia_summary")
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"wiki_summary:{exc}")
+
+    seen: set[str] = set()
+    unique: list[dict[str, str]] = []
+    for item in results:
+        u = item.get("url") or item.get("title") or ""
+        if u in seen:
+            continue
+        seen.add(u)
+        unique.append(item)
+        if len(unique) >= limit:
+            break
+
+    return {
+        "query": q,
+        "count": len(unique),
+        "results": unique,
+        "abstract": abstract[:800] if abstract and not str(abstract).startswith("instant_") else abstract[:800] if abstract else "",
+        "providers": providers_used or ["none"],
+        "provider": ",".join(providers_used) if providers_used else "none",
+        "search_url": f"https://duckduckgo.com/?q={quote_plus(q)}",
+        "errors": errors[:5] if not unique else [],
+        "note": (
+            "Disponible para TODOS los agentes. Cita títulos/URLs. "
+            "Usa platform.fetch_url para leer una página concreta."
+        ),
+    }
+
+
+async def fetch_public_url(url: str) -> dict[str, Any]:
+    if not settings.web_fetch_enabled:
+        return {"error": "web_fetch disabled"}
+    raw_url = (url or "").strip()
+    if not raw_url:
+        return {"error": "url required"}
+    try:
+        safe = await _assert_public_https(raw_url)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    headers = {
+        "User-Agent": "AgentsMorfBot/0.2 (+https://agent.codemorf.tech; research agent)"
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, headers=headers) as client:
+            r = await client.get(safe)
+        if r.status_code >= 400:
+            return {"error": f"HTTP {r.status_code}", "url": safe}
+        ctype = r.headers.get("content-type", "")
+        if "text" not in ctype and "html" not in ctype and "json" not in ctype and "xml" not in ctype:
+            return {"error": f"unsupported content-type: {ctype}", "url": safe}
+        text = r.text
+        if "html" in ctype:
+            text = _strip_html(text)
+        max_chars = settings.web_fetch_max_chars
+        return {
+            "url": str(r.url),
+            "status_code": r.status_code,
+            "content_type": ctype,
+            "text": text[:max_chars],
+            "truncated": len(text) > max_chars,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc), "url": raw_url}
+
+
 async def execute_builtin_tool(
     db: AsyncSession,
     *,
@@ -149,6 +464,15 @@ async def execute_builtin_tool(
     arguments: dict[str, Any],
     client_tool_names: list[str] | None = None,
 ) -> dict[str, Any]:
+    if name == "platform.web_search":
+        return await web_search(
+            str(arguments.get("query") or ""),
+            arguments.get("max_results"),
+        )
+
+    if name == "platform.fetch_url":
+        return await fetch_public_url(str(arguments.get("url") or ""))
+
     if name == "platform.current_datetime":
         now = datetime.now(UTC)
         return {
@@ -218,8 +542,12 @@ async def execute_builtin_tool(
         return {
             "platform_tools": [d["name"] for d in builtin_tool_definitions()],
             "client_tools": client_tool_names or [],
+            "web_search_enabled": settings.web_search_enabled,
+            "web_fetch_enabled": settings.web_fetch_enabled,
             "can_do_now": [
                 "Conversar y razonar con el modelo",
+                "Buscar en Internet (platform.web_search) — todos los agentes",
+                "Leer páginas públicas HTTPS (platform.fetch_url)",
                 "Buscar knowledge (si hay documentos vinculados)",
                 "Recordar hechos (si memoria activa)",
                 "Fecha/hora y cálculos",
@@ -229,6 +557,7 @@ async def execute_builtin_tool(
             "cannot_do_on_vps": [
                 "Shell/Linux del servidor Agents Morf",
                 "Pagos reales, email/WhatsApp, CRM, reservas sin backend cliente",
+                "Acceso a red privada / localhost",
             ],
         }
 
