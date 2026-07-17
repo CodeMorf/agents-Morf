@@ -9,7 +9,8 @@
 | | SHA |
 |--|-----|
 | Baseline (pre-feature HEAD) | `72c0f97b0998e05e250f8916824906828e87600a` |
-| Final (this phase) | `6dd63810ebc5cc6af317463e2d5408b9a8cabce3` |
+| Feature commit | `6dd63810ebc5cc6af317463e2d5408b9a8cabce3` |
+| Final (report SHA note) | `32b19d8390d47c3e2c58b63dc5c52a471fe814cf` |
 
 `main` was **not** merged, force-pushed, or modified.
 
@@ -102,9 +103,17 @@ Covered: seed idempotency, 10 templates, install, tenant isolation, publish/clon
 
 ## Staging
 
-- Deploy target stack: `agents-morf-v02` (parallel to legacy `codemorf-agent`)  
-- Domain cutover to exclusive production **not** performed in this phase  
-- Seed on staging: `python -m app.cli seed-agent-templates` inside API container after deploy  
+- Deploy target stack: `agents-morf-v02` on VPS `169.58.36.73` (parallel to legacy `codemorf-agent`)  
+- Staging HTTP: `http://127.0.0.1:18080` (nginx) / API `127.0.0.1:8100` (see phase-1 report); tunnel or host nginx as previously configured  
+- Productive domain cutover **not** performed in this phase  
+- This environment could not SSH (no key); **deploy + seed must be applied on the VPS** from pushed branch `architecture-v0.2` @ `32b19d8`:
+  ```bash
+  cd /www/wwwroot/agents-morf-v02/current
+  git fetch origin architecture-v0.2 && git checkout architecture-v0.2 && git pull --ff-only
+  docker compose -p agentsmorfv02 --env-file /www/wwwroot/agents-morf-v02/shared/.env \
+    -f docker-compose.yml -f docker-compose.staging.yml up -d --build
+  docker compose -p agentsmorfv02 exec backend python -m app.cli seed-agent-templates
+  ```
 
 ## Rollback
 
