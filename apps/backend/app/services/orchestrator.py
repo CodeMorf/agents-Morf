@@ -21,8 +21,74 @@ from app.services.builtin_tools import (
     execute_builtin_tool,
     format_builtin_tools_prompt,
     simulate_client_tool_result,
+    web_search,
 )
 from app.services.tools import execute_tool, format_tools_prompt, parse_tool_call, tools_for_agent
+
+
+def _append_tool_exchange(
+    messages: list[dict[str, Any]],
+    *,
+    assistant_text: str,
+    tool_name: str,
+    status: str,
+    payload: dict[str, Any],
+    call_id: str,
+) -> None:
+    """Append tool call + result in a format ALL providers accept (no role=tool).
+
+    Groq/OpenAI reject bare role=tool without tool_call_id / structured tool_calls.
+    We keep a simple text protocol that works with every chat-completions model.
+    """
+    if not assistant_text:
+        assistant_text = json.dumps(
+            {
+                "type": "tool_call",
+                "tool": tool_name,
+                "arguments": payload.get("arguments_echo") or {},
+            },
+            ensure_ascii=False,
+        )
+    messages.append({"role": "assistant", "content": assistant_text})
+    body = {
+        "tool_call_id": call_id,
+        "tool": tool_name,
+        "status": status,
+        "result": payload,
+    }
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                "TOOL_RESULT (executed by Agents Morf). Use this data to answer the user now. "
+                "If result.results exists, summarize with titles/URLs. "
+                f"payload={json.dumps(body, ensure_ascii=False)}"
+            ),
+        }
+    )
+
+
+def _wants_web_search(text: str) -> bool:
+    q = (text or "").lower()
+    keys = (
+        "busca en internet",
+        "busca en la web",
+        "buscar en internet",
+        "buscar en la web",
+        "search the web",
+        "web search",
+        "en internet",
+        "en la web",
+        "noticias de",
+        "googlea",
+        "busca info",
+        "busca información",
+        "qué es ",
+        "que es ",
+        "who is ",
+        "what is ",
+    )
+    return any(k in q for k in keys)
 
 DEFAULT_AGENT_PROMPT = """You are an operational AI agent on Agents Morf — not a passive FAQ bot.
 Act: understand intent, ask for missing data, call tools when needed, then answer with results.
@@ -292,13 +358,22 @@ async def run_agent(
         ops_prompt += (
             "\n\nRUNTIME: studio (Agents Morf dashboard). "
             "You MUST use tools when useful. Client business tools will receive DEMO results "
-            "so you can finish the conversation. Label demo data clearly."
+            "so you can finish the conversation. Label demo data clearly. "
+            "If WEB_SEARCH_PREFETCH is present below, use it as already-fetched web results."
         )
     else:
         ops_prompt += (
             "\n\nRUNTIME: api. Client tools are NOT executed here — emit tool_call JSON and stop "
             "until the caller posts tool-results."
         )
+
+    # Proactive web search when the user clearly asks for internet (all agents, studio).
+    web_prefetch: dict[str, Any] | None = None
+    if studio and settings.web_search_enabled and user_query and _wants_web_search(user_query):
+        try:
+            web_prefetch = await web_search(user_query, settings.web_search_max_results)
+        except Exception as exc:  # noqa: BLE001
+            web_prefetch = {"error": str(exc), "query": user_query, "results": []}
 
     context_sections = [
         section
@@ -310,12 +385,25 @@ async def run_agent(
             format_memory_context(memory_items),
             format_knowledge_context(knowledge_chunks),
             format_tools_prompt(tools) if tools else "",
+            (
+                "WEB_SEARCH_PREFETCH (already executed by Agents Morf — cite sources):\n"
+                + json.dumps(web_prefetch, ensure_ascii=False)[:6000]
+                if web_prefetch
+                else ""
+            ),
         ]
         if section
     ]
     final_messages: list[dict[str, Any]] = [
         {"role": "system", "content": "\n\n---\n\n".join(context_sections)}
-    ] + [dict(message) for message in messages if message["role"] != "system"]
+    ] + [
+        {
+            "role": m["role"] if m.get("role") in {"user", "assistant", "system"} else "user",
+            "content": m.get("content") or "",
+        }
+        for m in messages
+        if m.get("role") != "system"
+    ]
 
     configs = await _provider_configs(
         db,
@@ -338,6 +426,19 @@ async def run_agent(
     tool_calls: list[dict[str, Any]] = []
     all_errors: list[str] = []
     max_rounds = settings.tool_max_rounds + (2 if studio else 0)
+    if web_prefetch is not None:
+        tool_calls.append(
+            {
+                "id": f"call_prefetch_{uuid.uuid4().hex[:12]}",
+                "name": "platform.web_search",
+                "arguments": {"query": user_query},
+                "execution_mode": "server",
+                "requires_approval": False,
+                "status": "success" if web_prefetch.get("count") else "failed",
+                "reason": "prefetch_on_web_intent",
+                "simulated": False,
+            }
+        )
 
     for _round_index in range(max_rounds + 1):
         result, errors = await _complete_with_fallback(
@@ -381,32 +482,25 @@ async def run_agent(
             except Exception as exc:  # noqa: BLE001
                 payload = {"error": str(exc)}
                 call["status"] = "failed"
-            final_messages.extend(
-                [
-                    {"role": "assistant", "content": result.content},
-                    {
-                        "role": "tool",
-                        "content": json.dumps(
-                            {"tool": parsed.name, "status": call["status"], "result": payload},
-                            ensure_ascii=False,
-                        ),
-                    },
-                ]
+            _append_tool_exchange(
+                final_messages,
+                assistant_text=result.content,
+                tool_name=parsed.name,
+                status=call["status"],
+                payload=payload if isinstance(payload, dict) else {"value": payload},
+                call_id=call["id"],
             )
             continue
 
         tool = next((candidate for candidate in tools if candidate.name == parsed.name), None)
         if not tool:
-            final_messages.extend(
-                [
-                    {"role": "assistant", "content": result.content},
-                    {
-                        "role": "tool",
-                        "content": json.dumps(
-                            {"error": f"Unknown or disabled tool: {parsed.name}"}
-                        ),
-                    },
-                ]
+            _append_tool_exchange(
+                final_messages,
+                assistant_text=result.content,
+                tool_name=parsed.name,
+                status="failed",
+                payload={"error": f"Unknown or disabled tool: {parsed.name}"},
+                call_id=f"call_{uuid.uuid4().hex}",
             )
             continue
 
@@ -449,22 +543,13 @@ async def run_agent(
             demo = simulate_client_tool_result(tool.name, parsed.arguments)
             call["status"] = "simulated"
             call["simulated"] = True
-            final_messages.extend(
-                [
-                    {"role": "assistant", "content": result.content},
-                    {
-                        "role": "tool",
-                        "content": json.dumps(
-                            {
-                                "tool": tool.name,
-                                "status": "success",
-                                "result": demo,
-                                "simulated": True,
-                            },
-                            ensure_ascii=False,
-                        ),
-                    },
-                ]
+            _append_tool_exchange(
+                final_messages,
+                assistant_text=result.content,
+                tool_name=tool.name,
+                status="success",
+                payload=demo,
+                call_id=call["id"],
             )
             continue
 
@@ -493,22 +578,16 @@ async def run_agent(
             arguments=parsed.arguments,
         )
         call["status"] = execution.status
-        final_messages.extend(
-            [
-                {"role": "assistant", "content": result.content},
-                {
-                    "role": "tool",
-                    "content": json.dumps(
-                        {
-                            "tool": tool.name,
-                            "status": execution.status,
-                            "result": execution.result,
-                            "error": execution.error,
-                        },
-                        ensure_ascii=False,
-                    ),
-                },
-            ]
+        _append_tool_exchange(
+            final_messages,
+            assistant_text=result.content,
+            tool_name=tool.name,
+            status=execution.status,
+            payload={
+                "result": execution.result,
+                "error": execution.error,
+            },
+            call_id=call["id"],
         )
         if execution.status != "completed":
             if studio:

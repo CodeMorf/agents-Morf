@@ -124,8 +124,10 @@ export function ChatWorkspace() {
     },
   })
 
+  const [sendError, setSendError] = useState('')
   const send = useMutation({
     mutationFn: async () => {
+      setSendError('')
       const messages = [...history, { role: 'user', content: input }]
       return api<ChatResponse>('/chat/completions', {
         method: 'POST',
@@ -140,6 +142,9 @@ export function ChatWorkspace() {
           runtime: 'studio',
         }),
       })
+    },
+    onError: (err: Error) => {
+      setSendError(err.message || 'Error al chatear')
     },
     onSuccess: result => {
       const answer = result.choices[0]?.message
@@ -283,6 +288,7 @@ export function ChatWorkspace() {
           </span>
         </div>
 
+        {sendError && <div className="error" style={{ margin: '0 18px 8px' }}>{sendError}</div>}
         <div className="gpt-messages">
           {history.length === 0 && (
             <div className="gpt-hero-empty">

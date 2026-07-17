@@ -64,17 +64,42 @@ async def stream_complete(
         yield result.content[index : index + 80]
 
 
+def _sanitize_messages_for_chat(messages: list[dict]) -> list[dict]:
+    """Drop/repair roles providers reject (e.g. bare role=tool without tool_call_id)."""
+    cleaned: list[dict] = []
+    for msg in messages:
+        role = msg.get("role") or "user"
+        content = msg.get("content")
+        if content is None:
+            content = ""
+        if role == "tool":
+            tid = msg.get("tool_call_id") or "unknown"
+            cleaned.append(
+                {
+                    "role": "user",
+                    "content": f"TOOL_RESULT tool_call_id={tid}: {content}",
+                }
+            )
+            continue
+        if role not in {"system", "user", "assistant"}:
+            cleaned.append({"role": "user", "content": str(content)})
+            continue
+        cleaned.append({"role": role, "content": str(content)})
+    return cleaned
+
+
 async def _openai_compatible(config, messages, temperature, max_tokens):
     headers = {"Content-Type": "application/json"}
     if config.api_key:
         headers["Authorization"] = f"Bearer {config.api_key}"
+    safe_messages = _sanitize_messages_for_chat(messages)
     async with httpx.AsyncClient(timeout=120) as client:
         response = await client.post(
             f"{config.base_url.rstrip('/')}/chat/completions",
             headers=headers,
             json={
                 "model": config.model,
-                "messages": messages,
+                "messages": safe_messages,
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "stream": False,
