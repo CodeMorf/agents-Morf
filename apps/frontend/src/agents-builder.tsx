@@ -107,7 +107,8 @@ export function AgentsBuilderPage() {
     queryFn: () => api<AgentTemplateCard[]>('/agent-templates'),
   })
 
-  const [tab, setTab] = useState<'agents' | 'templates' | 'wizard'>('agents')
+  // Default to official catalog so users always see the 10 templates first.
+  const [tab, setTab] = useState<'agents' | 'templates' | 'wizard'>('templates')
   const [detailSlug, setDetailSlug] = useState<string | null>(null)
   const [wizardStep, setWizardStep] = useState(1)
   const [wizard, setWizard] = useState<WizardState>(emptyWizard)
@@ -255,6 +256,9 @@ export function AgentsBuilderPage() {
           <p className="muted">
             Crea agentes versionados con instrucciones, modelos, memoria, conocimiento y herramientas independientes.
           </p>
+          <p className="muted" style={{ marginTop: 6 }}>
+            Create versioned agents with independent prompts, models, memory and tools.
+          </p>
         </div>
         <div className="row-actions">
           <button type="button" className="primary compact" onClick={() => { setTab('wizard'); setWizardStep(1); setWizard(emptyWizard()) }}>
@@ -269,14 +273,42 @@ export function AgentsBuilderPage() {
         </div>
       </div>
 
+      <div className="create-box" style={{ marginTop: 0, marginBottom: 16 }}>
+        <div className="chips">
+          <span>10 plantillas oficiales</span>
+          <span>execution_mode=client</span>
+          <span>versionado inmutable</span>
+          <span>Terminal /terminal</span>
+        </div>
+        <p className="muted" style={{ margin: '10px 0 0' }}>
+          Las plantillas globales no se editan. Al pulsar <b>Usar plantilla</b> se crea una <b>copia draft de tu organización</b>.
+          Prueba tool calls en <a href="/terminal">Agents Morf Terminal</a>. Integración API en <a href="/docs">/docs</a>.
+        </p>
+      </div>
+
       <div className="tabs-row">
-        <button type="button" className={tab === 'agents' ? 'tab active' : 'tab'} onClick={() => setTab('agents')}>Mis agentes</button>
-        <button type="button" className={tab === 'templates' ? 'tab active' : 'tab'} onClick={() => setTab('templates')}>Catálogo ({templates.length})</button>
+        <button type="button" className={tab === 'templates' ? 'tab active' : 'tab'} onClick={() => setTab('templates')}>
+          Catálogo ({templates.length || 10})
+        </button>
+        <button type="button" className={tab === 'agents' ? 'tab active' : 'tab'} onClick={() => setTab('agents')}>
+          Mis agentes ({agents.length})
+        </button>
         <button type="button" className={tab === 'wizard' ? 'tab active' : 'tab'} onClick={() => setTab('wizard')}>Wizard / Import</button>
       </div>
 
       {message && <div className="success-banner">{message}</div>}
       <ErrorBox error={agentsError || templatesError || createBlank.error || install.error || publish.error || clone.error || importManifest.error} />
+      {templatesError && (
+        <div className="warning-banner">
+          No se pudo cargar el catálogo desde la API. Si acabas de desplegar, ejecuta en el backend:
+          <code> python -m app.cli seed-agent-templates</code>
+        </div>
+      )}
+      {!templatesError && templates.length === 0 && tab === 'templates' && (
+        <div className="warning-banner">
+          El catálogo está vacío. Ejecuta el seed de plantillas oficiales en el servidor y recarga.
+        </div>
+      )}
 
       {tab === 'agents' && (
         <>

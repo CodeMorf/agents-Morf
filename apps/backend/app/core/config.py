@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection: str = "agents_morf_context"
     auto_create_schema: bool = True
+    # Idempotent official catalog seed on API boot (safe; no per-tenant agents created).
+    auto_seed_agent_templates: bool = True
 
     default_organization_name: str = "CodeMorf"
     default_provider: str = "groq"

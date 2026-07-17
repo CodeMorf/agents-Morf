@@ -13,6 +13,21 @@ from app.core.database import create_schema
 async def lifespan(app: FastAPI):
     if settings.auto_create_schema:
         await create_schema()
+    if settings.auto_seed_agent_templates:
+        try:
+            from app.core.database import SessionLocal
+            from app.services.templates_seed import seed_agent_templates
+
+            async with SessionLocal() as db:
+                summary = await seed_agent_templates(db)
+            print(
+                "agent_templates_seed "
+                f"created={summary.get('created')} updated={summary.get('updated')} "
+                f"skipped={summary.get('skipped')} official={summary.get('total_official')}",
+                flush=True,
+            )
+        except Exception as exc:  # never block API boot on seed failure
+            print(f"agent_templates_seed_failed: {exc}", flush=True)
     yield
 
 

@@ -918,7 +918,7 @@ function DocsPage() {
   -H "Authorization: Bearer am_YOUR_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "agent": "agente-morf-demo",
+    "agent": "mi-agente-slug",
     "end_user_id": "customer-123",
     "messages": [{"role": "user", "content": "Hola"}]
   }'`, [base])
@@ -930,7 +930,7 @@ headers = {
     "Content-Type": "application/json",
 }
 payload = {
-    "agent": "agente-morf-demo",
+    "agent": "mi-agente-slug",
     "end_user_id": "customer-123",
     "messages": [{"role": "user", "content": "Hola"}],
 }
@@ -943,37 +943,117 @@ print(r.status_code, r.json())`, [base])
     "Content-Type": "application/json",
   },
   body: JSON.stringify({
-    agent: "agente-morf-demo",
+    agent: "mi-agente-slug",
     end_user_id: "customer-123",
     messages: [{ role: "user", content: "Hola" }],
   }),
 });
 const data = await res.json();
 console.log(data.provider, data.model, data.choices?.[0]?.message?.content);`, [base])
+  const toolResult = useMemo(() => `curl -X POST ${base}/api/v1/tool-results \\
+  -H "Authorization: Bearer am_YOUR_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "conversation_id": "UUID",
+    "tool_call_id": "call_123",
+    "status": "success",
+    "result": {"available": true, "slots": ["19:00", "20:30"]},
+    "idempotency_key": "unique-action-key"
+  }'`, [base])
+  const installTpl = useMemo(() => `curl -X POST ${base}/api/v1/agent-templates/sales-ai/install \\
+  -H "Authorization: Bearer YOUR_JWT" \\
+  -H "X-Organization-ID: ORG_UUID" \\
+  -H "Content-Type: application/json" \\
+  -d '{"name": "Mi Venta AI"}'`, [base])
   return <section className="panel">
-    <PageHeader eyebrow="DEVELOPER EXPERIENCE" title="API documentation" subtitle="OpenAPI vivo + ejemplos listos para integrar desde productos externos." />
+    <PageHeader eyebrow="DEVELOPER EXPERIENCE" title="API documentation" subtitle="OpenAPI vivo + Agent Builder + tool_results + ejemplos listos para integrar." />
     <div className="three">
       <a className="doc-card" href="/api/docs" target="_blank" rel="noreferrer"><Braces size={28} /><b>Swagger UI</b><span>Interactive API reference</span></a>
       <a className="doc-card" href="/api/redoc" target="_blank" rel="noreferrer"><BookOpen size={28} /><b>ReDoc</b><span>Readable endpoint documentation</span></a>
       <a className="doc-card" href="/api/openapi.json" target="_blank" rel="noreferrer"><Activity size={28} /><b>OpenAPI JSON</b><span>Generate SDKs and integrations</span></a>
     </div>
+
+    <div className="create-box" style={{ marginTop: 18 }}>
+      <h3 style={{ marginTop: 0 }}>Agent Builder (UI + API)</h3>
+      <p className="muted">
+        Ruta UI: <a href="/agents"><code>/agents</code></a> · Terminal playground: <a href="/terminal"><code>/terminal</code></a> (no es shell Linux).
+        Agents Morf razona y devuelve <code>tool_calls</code>; el backend del cliente ejecuta y responde con <code>tool-results</code>.
+      </p>
+      <div className="chips" style={{ margin: '12px 0' }}>
+        <span>execution_mode=client</span>
+        <span>10 plantillas oficiales</span>
+        <span>versionado inmutable</span>
+        <span>sin secretos en manifiestos</span>
+      </div>
+      <div className="table-wrap"><table>
+        <thead><tr><th>Método</th><th>Endpoint</th><th>Uso</th></tr></thead>
+        <tbody>
+          <tr><td>GET</td><td><code>/api/v1/agent-templates</code></td><td>Listar 10 plantillas globales</td></tr>
+          <tr><td>GET</td><td><code>/api/v1/agent-templates/&#123;slug&#125;</code></td><td>Detalle + tools + prompts</td></tr>
+          <tr><td>POST</td><td><code>/api/v1/agent-templates/&#123;slug&#125;/install</code></td><td>Copia draft tenant-owned</td></tr>
+          <tr><td>GET/POST/PATCH</td><td><code>/api/v1/agents</code></td><td>CRUD agentes</td></tr>
+          <tr><td>POST</td><td><code>/api/v1/agents/&#123;id&#125;/publish</code></td><td>Versión inmutable</td></tr>
+          <tr><td>GET</td><td><code>/api/v1/agents/&#123;id&#125;/versions</code></td><td>Historial</td></tr>
+          <tr><td>POST</td><td><code>/api/v1/agents/&#123;id&#125;/versions/&#123;n&#125;/restore</code></td><td>Rollback a draft</td></tr>
+          <tr><td>GET</td><td><code>/api/v1/agents/&#123;id&#125;/integration-manifest</code></td><td>curl/Python/JS sin secretos</td></tr>
+          <tr><td>POST</td><td><code>/api/v1/tool-results</code></td><td>Continuar tras tool_call cliente</td></tr>
+          <tr><td>POST</td><td><code>/api/v1/chat/completions</code></td><td>Chat OpenAI-compatible</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+
+    <div className="create-box">
+      <h3 style={{ marginTop: 0 }}>Catálogo de plantillas oficiales</h3>
+      <div className="table-wrap"><table>
+        <thead><tr><th>Nombre</th><th>Slug</th><th>Notas</th></tr></thead>
+        <tbody>
+          <tr><td>Venta AI</td><td><code>sales-ai</code></td><td>Leads, cotización, pedido (client tools)</td></tr>
+          <tr><td>RestaApp AI</td><td><code>restaapp-ai</code></td><td>Menú/reservas; sin tablas en Morf</td></tr>
+          <tr><td>Chatbot de soporte</td><td><code>support-chatbot</code></td><td>RAG + tickets</td></tr>
+          <tr><td>Sucursales AI</td><td><code>branches-ai</code></td><td>Ubicaciones y citas</td></tr>
+          <tr><td>Chatbot básico</td><td><code>basic-chatbot</code></td><td>FAQ; memoria off</td></tr>
+          <tr><td>Programación AI</td><td><code>programming-ai</code></td><td>Patches vía runner cliente; sin shell VPS</td></tr>
+          <tr><td>Análisis de datos AI</td><td><code>data-analysis-ai</code></td><td>SQL read-only</td></tr>
+          <tr><td>Finanzas AI</td><td><code>finance-ai</code></td><td>Sin pagos/transferencias</td></tr>
+          <tr><td>Auto Calendario AI</td><td><code>auto-calendar-ai</code></td><td>Idempotencia + timezone</td></tr>
+          <tr><td>Departamento AI</td><td><code>department-ai</code></td><td>Perfil de dpto. al instalar</td></tr>
+        </tbody>
+      </table></div>
+      <p className="muted">Flujo: plantilla global → install → draft → prueba en Terminal → publish. “Preentrenado” = prompts/tools/guardrails/ejemplos, no fine-tuning de pesos.</p>
+    </div>
+
     <div className="chips" style={{ margin: '16px 0' }}>
       <span>Auth: Bearer am_… (API key) o JWT de dashboard</span>
       <span>Header opcional: X-Organization-ID</span>
       <span>Chat: POST /api/v1/chat/completions</span>
+      <span>Tools: POST /api/v1/tool-results</span>
     </div>
-    <h3>cURL</h3><pre>{curl}</pre>
+    <h3>Instalar plantilla (dashboard JWT)</h3><pre>{installTpl}</pre>
+    <h3>Chat completions (cURL)</h3><pre>{curl}</pre>
     <h3>Python</h3><pre>{python}</pre>
     <h3>JavaScript</h3><pre>{javascript}</pre>
+    <h3>Tool result continuation (cliente ejecuta y devuelve)</h3>
+    <pre>{toolResult}</pre>
+    <p className="muted">Cuando <code>finish_reason=tool_calls</code>, el backend del cliente ejecuta la herramienta y llama a <code>/tool-results</code>. Agents Morf continúa y solo confirma acciones con status success.</p>
     <h3>Scopes de API key</h3>
     <div className="table-wrap"><table><thead><tr><th>Scope</th><th>Uso</th></tr></thead><tbody>
       <tr><td><code>chat:write</code></td><td>Chat completions</td></tr>
+      <tr><td><code>tools:result</code></td><td>Postear tool_results (alias de chat:write)</td></tr>
       <tr><td><code>feedback:write</code></td><td>Feedback de respuestas</td></tr>
       <tr><td><code>agents:read</code></td><td>Leer agentes</td></tr>
       <tr><td><code>memory:write</code></td><td>Escribir memoria</td></tr>
       <tr><td><code>knowledge:read</code></td><td>Leer knowledge</td></tr>
       <tr><td><code>*</code></td><td>Acceso total (solo backends de confianza)</td></tr>
     </tbody></table></div>
+    <h3>Documentación en repo</h3>
+    <ul className="tool-list">
+      <li><code>docs/AGENT_BUILDER.md</code></li>
+      <li><code>docs/AGENT_TEMPLATES.md</code></li>
+      <li><code>docs/AGENTS_MORF_TERMINAL.md</code></li>
+      <li><code>docs/CLIENT_TOOL_EXECUTION.md</code></li>
+      <li><code>docs/TOOL_RESULT_CONTINUATION.md</code></li>
+      <li><code>docs/INTEGRATION_MANIFEST.md</code></li>
+    </ul>
   </section>
 }
 
