@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.routers import (
+    agent_templates,
     agents,
     api_keys,
     auth,
@@ -18,6 +19,7 @@ from app.routers import (
     memory,
     organizations,
     providers,
+    tool_results,
     tools,
     training,
 )
@@ -109,6 +111,7 @@ for subrouter in [
     members.router,
     dashboard.router,
     feedback.router,
+    agent_templates.router,
     agents.router,
     providers.router,
     tools.router,
@@ -118,5 +121,6 @@ for subrouter in [
     api_keys.router,
     conversations.router,
     chat.router,
+    tool_results.router,
 ]:
     router.include_router(subrouter)

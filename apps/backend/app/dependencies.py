@@ -167,7 +167,13 @@ async def get_api_context(
 
 def require_api_scope(scope: str):
     async def dependency(ctx: ApiContext = Depends(get_api_context)) -> ApiContext:
+        # JWT session users have scopes={"*"}
         if "*" not in ctx.scopes and scope not in ctx.scopes:
+            # Accept tools:result as alias for posting tool results under chat:write
+            if scope == "chat:write" and "tools:result" in ctx.scopes:
+                return ctx
+            if scope == "tools:result" and "chat:write" in ctx.scopes:
+                return ctx
             raise HTTPException(status_code=403, detail=f"API key requires scope: {scope}")
         return ctx
 

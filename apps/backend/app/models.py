@@ -211,11 +211,36 @@ class ToolExecution(Base, TimestampMixin):
     tool_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("tools.id", ondelete="SET NULL"), nullable=True
     )
+    tool_call_id: Mapped[str] = mapped_column(String(80), default="", index=True)
+    tool_name: Mapped[str] = mapped_column(String(160), default="")
+    idempotency_key: Mapped[str] = mapped_column(String(160), default="", index=True)
     status: Mapped[str] = mapped_column(String(30), default="pending")
     arguments: Mapped[dict] = mapped_column(MutableDict.as_mutable(json_type()), default=dict)
     result: Mapped[dict] = mapped_column(MutableDict.as_mutable(json_type()), default=dict)
     error: Mapped[str] = mapped_column(Text, default="")
     latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    execution_mode: Mapped[str] = mapped_column(String(30), default="client")
+
+
+class AgentTemplate(Base, TimestampMixin):
+    """Global official agent templates (immutable for tenants)."""
+
+    __tablename__ = "agent_templates"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    slug: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(160))
+    description: Mapped[str] = mapped_column(Text, default="")
+    category: Mapped[str] = mapped_column(String(80), default="general")
+    icon: Mapped[str] = mapped_column(String(40), default="bot")
+    complexity: Mapped[str] = mapped_column(String(40), default="medium")
+    languages: Mapped[list] = mapped_column(MutableList.as_mutable(json_type()), default=list)
+    version: Mapped[str] = mapped_column(String(40), default="1.0.0")
+    status: Mapped[str] = mapped_column(String(30), default="published")
+    scope: Mapped[str] = mapped_column(String(30), default="global")
+    checksum: Mapped[str] = mapped_column(String(64), default="")
+    # Full template body: prompts, tools, examples, evaluation, guardrails, etc.
+    definition: Mapped[dict] = mapped_column(MutableDict.as_mutable(json_type()), default=dict)
+    changelog: Mapped[str] = mapped_column(Text, default="")
 
 
 class KnowledgeBase(Base, TimestampMixin):

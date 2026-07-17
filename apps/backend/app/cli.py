@@ -56,23 +56,25 @@ def create_admin(
     asyncio.run(_create_admin(email, password, organization))
 
 
-# Typer with a single command flattens to root options. Support both:
-#   python -m app.cli create-admin --email ... --password ...
-#   python -m app.cli --email ... --password ...
-@app.callback(invoke_without_command=True)
-def _root(
-    ctx: typer.Context,
-    email: str | None = typer.Option(None, "--email"),
-    password: str | None = typer.Option(None, "--password"),
-    organization: str = typer.Option("CodeMorf", "--organization"),
-):
-    if ctx.invoked_subcommand is not None:
-        return
-    if email and password:
-        create_admin(email=email, password=password, organization=organization)
-        return
-    typer.echo(ctx.get_help())
-    raise typer.Exit(code=0)
+@app.command("seed-agent-templates")
+def seed_agent_templates():
+    """Idempotently seed the ten official agent templates."""
+
+    async def _run():
+        await create_schema()
+        from app.services.templates_seed import seed_agent_templates as seed
+
+        async with SessionLocal() as db:
+            summary = await seed(db)
+        return summary
+
+    summary = asyncio.run(_run())
+    typer.echo(
+        f"Templates seed: created={summary['created']} updated={summary['updated']} "
+        f"skipped={summary['skipped']} official={summary['total_official']}"
+    )
+    for line in summary.get("details") or []:
+        typer.echo(f"  - {line}")
 
 
 if __name__ == "__main__":

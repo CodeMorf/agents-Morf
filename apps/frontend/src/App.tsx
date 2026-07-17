@@ -25,7 +25,10 @@ import {
   Wrench,
   Moon,
   Sun,
+  TerminalSquare,
 } from 'lucide-react'
+import { AgentsBuilderPage } from './agents-builder'
+import { TerminalPage } from './terminal'
 import {
   Agent,
   ApiKey,
@@ -302,6 +305,7 @@ type NavItem = { to: string; label: string; icon: typeof Gauge; when?: 'always' 
 const navItems: NavItem[] = [
   { to: '/', label: 'Chat', icon: MessagesSquare, when: 'always' },
   { to: '/agents', label: 'Agentes', icon: Bot, when: 'always' },
+  { to: '/terminal', label: 'Terminal', icon: TerminalSquare, when: 'always' },
   { to: '/docs', label: 'API docs', icon: BookOpen, when: 'always' },
   { to: '/api-keys', label: 'API keys', icon: KeyRound, when: 'org_admin' },
   { to: '/members', label: 'Equipo', icon: Users, when: 'org_admin' },
@@ -399,33 +403,7 @@ function Overview() {
 }
 
 function AgentsPage() {
-  const queryClient = useQueryClient()
-  const { data = [], error } = useQuery({ queryKey: ['agents'], queryFn: () => api<Agent[]>('/agents') })
-  const [open, setOpen] = useState(false)
-  const [form, setForm] = useState({ name: '', slug: '', description: '', system_prompt: '', instructions: '' })
-  const create = useMutation({
-    mutationFn: () => api<Agent>('/agents', {
-      method: 'POST', body: JSON.stringify({ ...form, memory_enabled: true, knowledge_enabled: true }),
-    }),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['agents'] }); setOpen(false); setForm({ name: '', slug: '', description: '', system_prompt: '', instructions: '' }) },
-  })
-  return <section className="panel">
-    <PageHeader eyebrow="AGENT BUILDER" title="Agents" subtitle="Create versioned agents with independent prompts, models, memory and tools." action={<button className="primary compact" onClick={() => setOpen(!open)}><Plus size={16} /> New agent</button>} />
-    <ErrorBox error={error || create.error} />
-    {open && <form className="form-grid create-box" onSubmit={e => { e.preventDefault(); create.mutate() }}>
-      <Field label="Name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value, slug: form.slug || e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') })} required />
-      <Field label="Slug" value={form.slug} onChange={e => setForm({ ...form, slug: e.target.value })} required />
-      <Field label="Description" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} />
-      <Textarea label="System prompt" value={form.system_prompt} onChange={e => setForm({ ...form, system_prompt: e.target.value })} required />
-      <Textarea label="Operational instructions" value={form.instructions} onChange={e => setForm({ ...form, instructions: e.target.value })} />
-      <button className="primary"><Save size={16} /> Create agent</button>
-    </form>}
-    <div className="card-grid">{data.map(agent => <article className="entity-card" key={agent.id}>
-      <div className="entity-title"><Bot size={24} /><div><h3>{agent.name}</h3><small>{agent.slug} · v{agent.current_version}</small></div></div>
-      <p>{agent.description || 'No description'}</p>
-      <div className="chips"><span>{agent.memory_enabled ? 'Memory on' : 'Memory off'}</span><span>{agent.knowledge_enabled ? 'RAG on' : 'RAG off'}</span><span>{agent.model || 'Provider model'}</span></div>
-    </article>)}</div>
-  </section>
+  return <AgentsBuilderPage />
 }
 
 function MiniChart({ title, points }: { title: string; points?: UsagePoint[] }) {
@@ -1193,6 +1171,7 @@ function Protected() {
     <Routes>
       <Route path="/" element={<Layout fullBleed><ChatWorkspace /></Layout>} />
       <Route path="/agents" element={<Layout><AgentsPage /></Layout>} />
+      <Route path="/terminal" element={<Layout><TerminalPage /></Layout>} />
       <Route path="/docs" element={<Layout><DocsPage /></Layout>} />
       <Route path="/api-keys" element={<Layout><OrgAdminOnly><ApiKeysPage /></OrgAdminOnly></Layout>} />
       <Route path="/members" element={<Layout><OrgAdminOnly><MembersPage /></OrgAdminOnly></Layout>} />
