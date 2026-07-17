@@ -18,8 +18,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Agents Morf API",
-    version="0.1.0",
+    description=(
+        "Provider-neutral, multi-tenant autonomous AI agent API with memory, knowledge, "
+        "training examples, tools and an OpenAI-compatible chat endpoint."
+    ),
+    version="0.2.0",
     docs_url="/api/docs",
+    redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
     lifespan=lifespan,
 )
@@ -36,6 +41,7 @@ app.add_middleware(
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    request.state.request_id = request_id
     response = await call_next(request)
     response.headers["X-Request-ID"] = request_id
     return response

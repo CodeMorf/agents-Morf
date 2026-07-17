@@ -1,27 +1,30 @@
 # Roadmap
 
-## Foundation included
+## 0.2 — agent control plane
 
-- Multi-tenant identity and roles
-- Agent and provider management
-- Sales leads
-- Reservations
-- Menu and orders
-- Provider-neutral call jobs
-- Conversations and chat completions
-- SMTP2GO test delivery
-- React administration UI
+- provider-neutral chat API;
+- agent Studio;
+- API keys;
+- scoped memory;
+- Qdrant semantic index with lexical fallback;
+- knowledge bases;
+- behavioral training datasets;
+- generic tool contracts;
+- optional restricted Grok Build adapter.
 
-## Planned extensions
+## Next
 
-- Visual workflow builder
-- Qdrant ingestion and document RAG pipeline
-- Semantic cache and distributed rate limiting
-- Calendar provider adapters
-- WhatsApp and SMS channels
-- Twilio/Telnyx/Vonage call execution
-- Stripe and regional payment adapters
-- Human approval queues and escalation console
-- Detailed usage metering and billing
-- Fine-grained permission editor
-- Prometheus/Grafana dashboards
+- Alembic production migrations;
+- native provider streaming and native function calling;
+- OpenAPI tool importer;
+- tool result continuation endpoint;
+- fine-grained API-key scopes;
+- Redis rate limiting and idempotency keys;
+- semantic response cache;
+- background document processors for PDF, DOCX and CSV;
+- stronger SSRF controls for server tools;
+- evaluation metrics and regression gates;
+- human approval inbox;
+- horizontal worker deployment;
+- Prometheus metrics and Grafana dashboards;
+- optional provider-specific fine-tuning jobs.

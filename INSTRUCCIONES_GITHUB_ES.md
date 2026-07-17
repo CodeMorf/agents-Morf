@@ -1,83 +1,18 @@
-# Instrucciones para subir Agents Morf a GitHub
+# Actualizar Agents Morf en GitHub sin romper `main`
 
-Repositorio de destino:
+Repositorio: `https://github.com/CodeMorf/agents-Morf.git`
 
-```text
-https://github.com/CodeMorf/agents-Morf.git
-```
+No uses `--force` para esta actualización. Crea una rama de revisión:
 
-## Opción recomendada: terminal
-
-1. Descarga y descomprime `agents-Morf-full.zip`.
-2. Abre una terminal dentro de la carpeta `agents-Morf`.
-3. Ejecuta:
-
-```bash
-git init
-git branch -M main
+```powershell
+git checkout -b architecture-v0.2
 git add .
-git commit -m "Initial Agents Morf platform"
-git remote add origin https://github.com/CodeMorf/agents-Morf.git
-git push -u origin main
+git commit -m "Decouple product backends and add memory training platform"
+git push -u origin architecture-v0.2
 ```
 
-Si aparece el error `remote origin already exists`, usa:
+Después abre un Pull Request hacia `main`, revisa los cambios y espera que GitHub Actions termine correctamente.
 
-```bash
-git remote set-url origin https://github.com/CodeMorf/agents-Morf.git
-git push -u origin main
-```
+La plataforma Agents Morf contiene la API, interfaz, agentes, memoria, RAG, herramientas, proveedores, ejemplos de entrenamiento, evaluaciones y feedback. Los motores de correo, WhatsApp, reservas, pagos, órdenes y calendarios permanecen en los backends de cada producto.
 
-GitHub puede solicitar autenticación mediante navegador o token personal. No escribas claves de proveedores de IA ni SMTP2GO en GitHub.
-
-## Descripción del repositorio
-
-```text
-Agents Morf — The Autonomous AI Agent Operating System for sales, reservations, restaurant operations, support and real-world business automation.
-```
-
-## Página web
-
-```text
-https://agent.codemorf.tech
-```
-
-## Topics sugeridos
-
-```text
-ai-agents
-autonomous-agents
-fastapi
-react
-vite
-multi-tenant
-llm
-ollama
-sales-automation
-restaurant-automation
-reservations
-openai-compatible
-```
-
-## Después de subirlo
-
-En GitHub entra a **Settings → General** y configura la descripción y el sitio web. Después protege la rama `main` en **Settings → Branches** cuando empieces a colaborar con más desarrolladores.
-
-## Instalación en el servidor
-
-```bash
-git clone https://github.com/CodeMorf/agents-Morf.git
-cd agents-Morf
-cp .env.example .env
-nano .env
-docker compose up -d --build
-```
-
-Después crea el administrador:
-
-```bash
-docker compose exec backend python -m app.cli create-admin \
-  --email admin@codemorf.tech \
-  --password 'CREA_UNA_CONTRASEÑA_LARGA_Y_UNICA' \
-  --organization CodeMorf
-```
+No subas `.env`, claves privadas, datos de clientes ni el ZIP/código fuente de Grok Build. Grok Build se mantiene independiente y solo puede conectarse mediante el adaptador restringido documentado.

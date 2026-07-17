@@ -5,79 +5,122 @@
 
 ## The Autonomous AI Agent Operating System
 
-**Agents Morf** is an open, multi-tenant platform for building, training, operating and monitoring autonomous business agents that converse naturally and execute real work.
+**Agents Morf** is a provider-neutral, multi-tenant platform for creating, training, operating and exposing autonomous AI agents through a robust API and web Studio.
 
-[Architecture](docs/ARCHITECTURE.md) · [Deployment](docs/DEPLOYMENT.md) · [API](docs/API.md) · [Security](docs/SECURITY.md) · [Roadmap](docs/ROADMAP.md)
+[Architecture](docs/ARCHITECTURE.md) · [Training & memory](docs/TRAINING_AND_MEMORY.md) · [API](docs/API.md) · [Deployment](docs/DEPLOYMENT.md) · [Security](docs/SECURITY.md) · [Grok Build integration](docs/GROK_BUILD_INTEGRATION.md)
 </div>
 
 ---
 
-## What it is
+## The platform boundary
 
-Agents Morf is not a single chatbot. It is an operating layer for AI workers that can qualify leads, sell products, answer support questions, schedule appointments, manage restaurant reservations, recommend menu items, create orders, trigger calls, send email and invoke external business APIs.
+Agents Morf is the **AI reasoning and orchestration layer**. It is not the operational backend for every CodeMorf product.
 
-The repository provides a production-oriented foundation with:
+```text
+ALLSENDER / EcoMarket / Restaurant / Calendar / future products
+                              │
+                              ▼
+                    Agents Morf API
+       conversation · memory · RAG · models · tools · guardrails
+                              │
+                              ▼
+             response or structured tool request
+                              │
+                              ▼
+             each product backend executes the action
+```
 
-- **Python 3.12 + FastAPI** backend
-- **React + Vite + TypeScript** administration and Studio interface
-- PostgreSQL, Redis and optional Qdrant/Ollama services
-- Multi-organization isolation and role-based access
-- Provider adapters for OpenAI-compatible APIs, Gemini, Anthropic-compatible APIs and Ollama
-- Autonomous sales, reservations, restaurant catalog, orders and call-job modules
-- SMTP2GO integration using environment variables only
-- Docker Compose, Nginx, Cloudflare-ready deployment and health checks
-- OpenAI-style `/api/v1/chat/completions` endpoint
-- Structured audit-ready data models and request IDs
+The external product keeps ownership of:
 
-## Business agents
+- customers and contacts;
+- email, WhatsApp and social messaging;
+- reservations, menus, inventory and orders;
+- calendars and appointments;
+- payments and billing;
+- CRM, ERP and other operational data.
 
-### Autonomous sales agent
+Agents Morf understands the request, remembers relevant context, retrieves approved knowledge, selects a model and decides whether an external tool is needed. The calling platform then executes the real business operation—or registers a protected HTTP tool that Agents Morf may call.
 
-The sales module is designed to:
+## Included
 
-- capture and qualify leads
-- discover customer needs through natural conversation
-- recommend products or services
-- create follow-up actions
-- record objections and buying intent
-- create orders or reservation requests
-- call approved tools and business APIs
-- hand off to a human when confidence or policy requires it
+- **Python 3.12 + FastAPI** API and orchestration layer
+- **React + Vite + TypeScript** administration and Agent Studio interface
+- PostgreSQL for tenant, agent, conversation, training and audit data
+- Redis for jobs, future rate limiting and distributed coordination
+- Qdrant for semantic memory and knowledge retrieval
+- Ollama support for local models
+- OpenAI-compatible, Gemini and Anthropic-compatible adapters
+- Optional Grok Build binary adapter without modifying Grok Build source
+- JWT dashboard authentication and revocable API keys for external products
+- OpenAI-style `POST /api/v1/chat/completions`
+- Server-Sent Events response mode
+- Agent version snapshots
+- Durable scoped memory
+- Knowledge bases, document upload (PDF, DOCX, TXT, Markdown, CSV, JSON) and chunking
+- Behavioral training datasets, examples and evaluation runs
+- Human feedback and correction promotion into reviewed training data
+- Provider fallback
+- Generic client-executed and server-executed tools
+- Tool approval policies and execution logs
+- Automatic memory extraction through a worker
+- Swagger UI, ReDoc and OpenAPI JSON
+- Docker Compose and Nginx deployment
 
-### Restaurant and hospitality agent
+## Memory model
 
-The restaurant module can:
+Memory is stored independently from product databases and can be scoped to:
 
-- show available menu items
-- answer questions about descriptions, prices and allergens
-- create and update customer orders
-- request, confirm and cancel reservations
-- preserve party size, date, time and customer notes
-- trigger confirmation email or a call job
-- hand off exceptional requests to staff
+- organization;
+- agent;
+- external end user;
+- conversation.
 
-### Scheduling and call orchestration
+Supported memory kinds include facts, preferences, instructions, summaries and outcomes. Each item is stored in PostgreSQL and, when embeddings are available, indexed in Qdrant. If Qdrant or the embedding provider is temporarily unavailable, lexical retrieval remains available.
 
-The platform includes provider-neutral records and endpoints for:
+The worker can extract safe, durable memories after a conversation. It is instructed not to store passwords, tokens, payment data or temporary requests.
 
-- appointment and table reservations
-- outbound call jobs
-- call status webhooks
-- future Twilio, Vonage, Telnyx or SIP integrations
+## Training model
 
-Actual telephone calls require credentials and an account with a telephony provider; the code intentionally contains no hidden credentials.
+“Training” in this release means controlled agent behavior configuration—not hidden fine-tuning:
 
-## Supported AI providers
+1. system prompt and operational instructions;
+2. immutable published agent versions;
+3. curated input/expected-output examples;
+4. approved knowledge bases;
+5. durable memory;
+6. evaluation runs against training datasets.
 
-Agents Morf is provider-neutral. Adapters are included for:
+Provider-specific fine-tuning can be added later as an optional deployment feature without changing the public agent API.
 
+## Generic tools
+
+Tools connect Agents Morf to the real backend of another platform.
+
+### Client execution
+
+Agents Morf returns a structured tool call. ALLSENDER, the restaurant backend or another caller executes it and sends the result back.
+
+### Server execution
+
+Agents Morf calls a registered HTTPS endpoint using encrypted credentials. This mode is optional and controlled per agent and per tool.
+
+Agents Morf never claims that an action succeeded until a tool result confirms it.
+
+## Provider support
+
+- Ollama
 - OpenAI-compatible APIs
-- Google Gemini REST API
-- Anthropic-compatible Messages API
-- Ollama local models
-- Groq, OpenRouter, Mistral, DeepSeek, xAI and other vendors that expose an OpenAI-compatible endpoint
+- OpenAI
+- Groq
+- OpenRouter
+- Mistral-compatible services
+- DeepSeek-compatible services
+- xAI-compatible endpoints
+- Google Gemini
+- Anthropic Claude-compatible Messages API
+- optional Grok Build command-line adapter
 
-Providers may offer trials or limited free tiers, but availability and pricing are controlled by each provider. **Ollama is the local option** for models that can run on your own hardware.
+Free plans and model availability are controlled by the respective providers and must not be treated as permanent production capacity.
 
 ## Architecture
 
@@ -86,16 +129,20 @@ Cloudflare
     │
     ▼
 Nginx
-    ├── React/Vite static application
-    └── /api/* → FastAPI Gateway
-                    ├── Authentication + tenant resolution
-                    ├── Agent orchestration + tool router
-                    ├── Provider gateway + fallbacks
+    ├── React/Vite static Studio
+    └── /api/* → FastAPI
+                    ├── JWT / API-key authentication
+                    ├── tenant isolation
+                    ├── agent version + instruction compiler
+                    ├── memory retrieval
+                    ├── knowledge retrieval
+                    ├── behavioral examples
+                    ├── tool router
+                    ├── provider fallback
                     ├── PostgreSQL
-                    ├── Redis
-                    ├── Qdrant (optional RAG)
-                    ├── Ollama (optional local inference)
-                    └── Worker processes
+                    ├── Redis worker queue
+                    ├── Qdrant
+                    └── Ollama / cloud providers / optional Grok Build
 ```
 
 ## Repository layout
@@ -103,108 +150,94 @@ Nginx
 ```text
 agents-Morf/
 ├── apps/
-│   ├── backend/          FastAPI application, models, APIs and services
-│   └── frontend/         React/Vite administration and Studio UI
-├── docs/                 Architecture, deployment, API and security docs
-├── infrastructure/nginx/ Production reverse-proxy configuration
-├── scripts/              Bootstrap, deployment and backup helpers
-├── .github/workflows/    Continuous integration
+│   ├── backend/                  FastAPI application
+│   │   ├── app/routers/         Modular REST routers
+│   │   └── app/services/        Providers, memory, RAG, tools and orchestration
+│   └── frontend/                 React/Vite dashboard and Studio
+├── docs/
+├── infrastructure/nginx/
+├── scripts/
 ├── docker-compose.yml
 ├── .env.example
 └── Makefile
 ```
 
-## Quick start with Docker
+## Quick start
 
 ```bash
 cp .env.example .env
-# Generate secure values before production:
-# openssl rand -hex 32
 
+# Generate secrets before production:
+openssl rand -hex 32
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
+# Core stack without local Ollama
 docker compose up -d --build
 
+# Or include local Ollama
+docker compose --profile local-ai up -d --build
+```
+
+Create the first administrator:
+
+```bash
 docker compose exec backend python -m app.cli create-admin \
-  --email admin@example.com \
-  --password 'CHANGE_THIS_NOW' \
-  --organization 'CodeMorf'
+  --email admin@codemorf.tech \
+  --password 'USE_A_LONG_UNIQUE_PASSWORD' \
+  --organization CodeMorf
+```
+
+When Ollama is enabled, download the configured models:
+
+```bash
+docker compose exec ollama ollama pull qwen2.5:7b
+docker compose exec ollama ollama pull nomic-embed-text
 ```
 
 Open:
 
-- Frontend: `http://localhost`
-- API docs: `http://localhost/api/docs`
+- Studio: `http://localhost`
+- Swagger: `http://localhost/api/docs`
+- ReDoc: `http://localhost/api/redoc`
 - Health: `http://localhost/api/v1/health`
 
-## Local development
+## External product integration
 
-Backend:
-
-```bash
-cd apps/backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
-cp ../../.env.example ../../.env
-uvicorn app.main:app --reload --port 8000
-```
-
-Frontend:
+Create an API key in the dashboard and call:
 
 ```bash
-cd apps/frontend
-npm install
-npm run dev
-```
-
-## Environment and secrets
-
-Copy `.env.example` to `.env`. Never commit `.env`, provider keys, SMTP2GO keys, JWT secrets or encryption keys.
-
-The previously shared SMTP2GO key must be rotated before use. Set only the replacement key in the server-side `.env`:
-
-```env
-SMTP2GO_API_KEY=
-MAIL_FROM_ADDRESS=it@codemorf.tech
-MAIL_FROM_NAME=Agents Morf
-```
-
-## API examples
-
-Login:
-
-```bash
-curl -X POST http://localhost/api/v1/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"admin@example.com","password":"CHANGE_THIS_NOW"}'
-```
-
-Chat completion:
-
-```bash
-curl -X POST http://localhost/api/v1/chat/completions \
-  -H 'Authorization: Bearer YOUR_ACCESS_TOKEN' \
-  -H 'X-Organization-ID: YOUR_ORGANIZATION_ID' \
+curl -X POST https://agent.codemorf.tech/api/v1/chat/completions \
+  -H 'Authorization: Bearer am_YOUR_API_KEY' \
   -H 'Content-Type: application/json' \
   -d '{
-    "agent_id":"YOUR_AGENT_ID",
-    "messages":[{"role":"user","content":"I need a table for four tomorrow at 8 PM"}],
-    "stream":false
+    "agent": "sales-agent",
+    "external_conversation_id": "allsender-thread-8492",
+    "end_user_id": "customer-123",
+    "messages": [
+      {"role": "user", "content": "I need help choosing a plan"}
+    ],
+    "remember": true,
+    "stream": false
   }'
 ```
 
-## Production domain
+The response may contain natural-language content, structured tool calls, or both. Product backends should treat a tool call as a request—not proof that an action has already happened.
 
-The supplied Nginx configuration is prepared for:
+## Grok Build safety
 
-```text
-https://agent.codemorf.tech
-```
+The supplied Grok Build source is **not copied into or edited by this project**. Agents Morf includes only an optional adapter that can invoke an independently installed `grok` binary in restricted headless mode. This protects the upstream Rust workspace from accidental changes and keeps the generic business-agent platform independent from a coding-agent implementation.
 
-Use Cloudflare **Full (strict)** after a valid origin certificate is installed. Do not cache `/api/*` or authenticated HTML.
+See [docs/GROK_BUILD_INTEGRATION.md](docs/GROK_BUILD_INTEGRATION.md).
 
-## Current scope
+## Important production notes
 
-This repository is a working, extensible foundation and executable MVP. The core authentication, tenancy, agent, provider, lead, reservation, catalog, order, call-job and chat flows are implemented. External payment, calendar, CRM, WhatsApp and telephony providers require their own credentials and adapters before they can execute real third-party actions.
+- Replace every placeholder secret in `.env`.
+- Keep `.env` out of Git.
+- Use Cloudflare SSL **Full (strict)** after installing an origin certificate.
+- Do not cache `/api/*` or authenticated application HTML.
+- Restrict server-executed tool URLs to trusted HTTPS services.
+- Use client-executed tools when the product backend should retain complete control.
+- A CPU-only Ollama server cannot guarantee hundreds of heavy generations at once. Use queues, caching and cloud-provider fallback.
 
 ## License
 

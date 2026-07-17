@@ -1,36 +1,28 @@
 # Project status
 
-## Verified in this package
+Version: **0.2.0 development candidate**
 
-- Python source compiles.
-- Backend Ruff checks pass.
-- Backend health test passes with SQLite.
-- React/Vite TypeScript production build passes.
-- No real SMTP2GO or AI-provider secret is included.
+Implemented and verified:
 
-## Implemented foundation
+- FastAPI and React/Vite applications;
+- organization isolation, dashboard JWTs and scoped external API keys;
+- provider routing and fallback;
+- Ollama, OpenAI-compatible, Gemini, Anthropic and restricted Grok Build adapters;
+- versioned agents;
+- scoped memory with PostgreSQL source of truth, Qdrant semantic index and lexical fallback;
+- safe automatic memory extraction worker;
+- knowledge bases, text ingestion and document chunking;
+- behavioral training datasets, examples and evaluation runs;
+- human feedback collection and reviewed correction promotion;
+- generic tool registry, JSON Schema validation, client/server execution modes and SSRF controls;
+- Studio, API documentation, Docker Compose and Nginx;
+- backend lint/tests and frontend production build.
 
-- Authentication with access and refresh JWTs
-- Administrator bootstrap command
-- Organizations, memberships and roles
-- Tenant isolation through `X-Organization-ID`
-- Agent and provider CRUD foundation
-- Provider gateway and fallback sequence
-- OpenAI-compatible, Gemini, Anthropic-compatible and Ollama adapters
-- Sales leads, reservations, menu items, orders and call jobs
-- Conversation and message persistence
-- OpenAI-style chat completion API with SSE response mode
-- SMTP2GO test email endpoint
-- React/Vite command center
-- Docker Compose, Nginx, health checks and CI
+Before public production:
 
-## Requires configuration or further provider work
-
-- Real phone calls require Twilio, Telnyx, Vonage or another telephony adapter and credentials.
-- Real calendar bookings require a Google Calendar, Microsoft 365 or CalDAV adapter.
-- Payments require a payment-provider adapter and merchant credentials.
-- WhatsApp/SMS require an approved channel provider.
-- Qdrant is included as infrastructure; document ingestion and embedding pipelines are on the roadmap.
-- Production deployments should introduce Alembic migrations before schema evolution begins.
-
-The package is an executable MVP and professional foundation, not a claim that every third-party business integration works without credentials or provider-specific implementation.
+- add and validate Alembic migrations before the first schema upgrade;
+- configure `TOOL_ALLOWED_HOSTS` and production egress firewall rules;
+- complete concurrency, queue and provider-fallback load tests;
+- configure real providers, backups, monitoring and retention policies;
+- validate Cloudflare and origin TLS;
+- complete an independent security review.

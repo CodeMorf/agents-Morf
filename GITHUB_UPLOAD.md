@@ -1,63 +1,28 @@
-# Upload to GitHub
+# Updating the GitHub repository safely
 
-Repository:
+Repository: `https://github.com/CodeMorf/agents-Morf.git`
 
-```text
-https://github.com/CodeMorf/agents-Morf.git
-```
-
-## Command line
-
-Extract the ZIP, open a terminal inside the `agents-Morf` directory and run:
+Use a feature branch instead of forcing `main`:
 
 ```bash
-git init
-git branch -M main
+git checkout -b architecture-v0.2
 git add .
-git commit -m "Initial Agents Morf platform"
-git remote add origin https://github.com/CodeMorf/agents-Morf.git
-git push -u origin main
+git commit -m "Decouple product backends and add memory training platform"
+git push -u origin architecture-v0.2
 ```
 
-If `origin` already exists:
+Open a pull request, wait for CI, review the diff and merge only after backend tests and the React/Vite build succeed.
 
-```bash
-git remote set-url origin https://github.com/CodeMorf/agents-Morf.git
-git push -u origin main
-```
-
-## Repository presentation
-
-Suggested GitHub description:
+Suggested description:
 
 ```text
-Agents Morf — The Autonomous AI Agent Operating System for sales, reservations, restaurant operations, support and real-world business automation.
-```
-
-Suggested website:
-
-```text
-https://agent.codemorf.tech
+Provider-neutral, multi-tenant AI agent API and Studio with memory, RAG, tools, training, evaluations and model routing.
 ```
 
 Suggested topics:
 
 ```text
-ai-agents autonomous-agents fastapi react vite multi-tenant llm ollama sales-automation restaurant-automation reservations openai-compatible
+ai-agents autonomous-agents fastapi react vite multi-tenant llm ollama rag agent-memory tool-calling openai-compatible
 ```
 
-With GitHub CLI:
-
-```bash
-gh repo edit CodeMorf/agents-Morf \
-  --description "Agents Morf — The Autonomous AI Agent Operating System for sales, reservations, restaurant operations, support and real-world business automation." \
-  --homepage "https://agent.codemorf.tech" \
-  --add-topic ai-agents \
-  --add-topic autonomous-agents \
-  --add-topic fastapi \
-  --add-topic react \
-  --add-topic vite \
-  --add-topic multi-tenant \
-  --add-topic llm \
-  --add-topic ollama
-```
+Never upload `.env`, API keys, customer records or the Grok Build source archive.

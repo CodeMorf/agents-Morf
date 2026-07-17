@@ -1,30 +1,74 @@
-# Architecture
+# Agents Morf architecture
 
-Agents Morf uses a modular monolith for the initial release. This keeps deployment simple while retaining clear service boundaries that can later be extracted.
+## Purpose
 
-## Request path
+Agents Morf is a centralized AI agent control plane deployed on `agent.codemorf.tech`. Other products consume it through API keys and keep their own operational databases and integrations.
 
-1. Cloudflare terminates edge TLS and applies DDoS/WAF controls.
-2. Nginx serves the compiled React SPA and proxies `/api/` to FastAPI.
-3. FastAPI assigns a request ID and authenticates the user.
-4. `X-Organization-ID` resolves the active tenant and membership.
-5. The route invokes a domain service or the agent orchestrator.
-6. The provider gateway selects an enabled provider and model.
-7. Tool actions create auditable domain records rather than bypassing business rules.
-8. PostgreSQL persists business state; Redis is available for caching, rate limits and queues.
+## Runtime request flow
 
-## Domain modules
+1. Authenticate a dashboard user or external API key.
+2. Resolve the organization and agent.
+3. Load the published agent configuration.
+4. Retrieve scoped memory for the agent, end user and conversation.
+5. Retrieve approved knowledge chunks linked to the agent.
+6. Inject curated behavioral training examples.
+7. Load the tools linked to the agent.
+8. Choose the preferred provider and fallback order.
+9. Generate a response or a structured tool request.
+10. Execute an approved server tool, or return a client tool call to the product backend.
+11. Persist messages and usage.
+12. Queue safe memory extraction.
 
-- Identity and organizations
-- Agent definitions and system instructions
-- Model provider configurations
-- Leads and sales qualification
-- Reservations
-- Menu catalog and orders
-- Call jobs
-- Conversations and messages
-- Email delivery through SMTP2GO
+## Product boundary
 
-## Scaling
+Agents Morf does not contain restaurant, email, calendar, order or payment engines. Those services expose tool contracts to the agent platform.
 
-The API is stateless apart from external stores. Multiple backend and worker replicas can be added behind a load balancer. Local Ollama is suitable for development and controlled workloads; burst traffic should use scalable providers or dedicated inference infrastructure.
+Example:
+
+```text
+Restaurant customer
+       │
+Restaurant backend / channel adapter
+       │  POST /chat/completions
+       ▼
+Agents Morf
+       │  tool call: restaurant.check_availability
+       ▼
+Restaurant backend executes against its own database
+       │  tool result
+       ▼
+Agents Morf creates the customer-facing answer
+```
+
+## Memory
+
+PostgreSQL is the source of truth. Qdrant stores semantic vectors when embedding services are available. Retrieval combines semantic results with a lexical fallback.
+
+Scopes:
+
+- organization: shared rules and facts;
+- agent: agent-specific context;
+- end_user: durable facts tied to the external caller's stable user ID;
+- conversation: context limited to one conversation.
+
+## Training
+
+Behavior is assembled from versioned instructions, training examples, knowledge and memory. Training examples are few-shot examples injected into the prompt. Evaluation runs compare actual answers with expected answers.
+
+## Tools
+
+Tools are generic contracts:
+
+- `client`: return the call to the caller for execution;
+- `server`: call a protected HTTPS API from Agents Morf.
+
+The caller remains the system of record. Every tool call has an execution status and audit trail.
+
+## Grok Build
+
+Grok Build remains an independent program. The optional adapter launches its installed binary using restricted headless mode. The upstream Rust source is not modified and the provider is disabled by default.
+
+
+## Learning loop
+
+Feedback is stored separately from training data. Only reviewed corrections are promoted into behavioral examples, preventing silent learning from untrusted customer input.
