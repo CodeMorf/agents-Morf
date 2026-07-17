@@ -93,27 +93,37 @@ async def _openai_compatible(config, messages, temperature, max_tokens):
     if config.api_key:
         headers["Authorization"] = f"Bearer {config.api_key}"
     safe_messages = _sanitize_messages_for_chat(messages)
+    payload = {
+        "model": config.model,
+        "messages": safe_messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "stream": False,
+    }
+    last_error = ""
     async with httpx.AsyncClient(timeout=120) as client:
-        response = await client.post(
-            f"{config.base_url.rstrip('/')}/chat/completions",
-            headers=headers,
-            json={
-                "model": config.model,
-                "messages": safe_messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "stream": False,
-            },
-        )
-    if response.is_error:
-        raise ProviderError(f"{config.name}: HTTP {response.status_code}: {response.text[:300]}")
-    data = response.json()
-    return ProviderResult(
-        content=data["choices"][0]["message"].get("content") or "",
-        model=data.get("model", config.model),
-        provider=config.name,
-        usage=data.get("usage", {}),
-    )
+        for attempt in range(3):
+            response = await client.post(
+                f"{config.base_url.rstrip('/')}/chat/completions",
+                headers=headers,
+                json=payload,
+            )
+            if response.status_code == 429:
+                last_error = response.text[:300]
+                await asyncio.sleep(2.5 * (attempt + 1))
+                continue
+            if response.is_error:
+                raise ProviderError(
+                    f"{config.name}: HTTP {response.status_code}: {response.text[:300]}"
+                )
+            data = response.json()
+            return ProviderResult(
+                content=data["choices"][0]["message"].get("content") or "",
+                model=data.get("model", config.model),
+                provider=config.name,
+                usage=data.get("usage", {}),
+            )
+    raise ProviderError(f"{config.name}: rate limited (429). Reintenta en unos segundos. {last_error}")
 
 
 async def _stream_openai_compatible(config, messages, temperature, max_tokens):
