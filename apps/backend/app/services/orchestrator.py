@@ -24,6 +24,12 @@ from app.services.builtin_tools import (
     web_search,
 )
 from app.services.tools import execute_tool, format_tools_prompt, parse_tool_call, tools_for_agent
+from app.services.workspace_agent import (
+    execute_workspace_tool,
+    format_workspace_tools_prompt,
+    resolve_canonical_tool,
+    workspace_tool_names,
+)
 
 
 def _append_tool_exchange(
@@ -113,8 +119,11 @@ def _clean_web_query(text: str) -> str:
     return q.strip() or (text or "").strip()
 
 DEFAULT_AGENT_PROMPT = """You are an operational AI agent on Agents Morf — not a passive FAQ bot.
-Act: understand intent, ask for missing data, call tools when needed, then answer with results.
-Use platform tools (knowledge, memory, datetime, calculate) yourself.
+You work like Grok Build (xai-org/grok-build): explore, read, search, edit, run allowed commands,
+search the web, and finish with a clear answer grounded in tool results.
+Act: understand intent, gather missing data, CALL tools, then answer with results.
+Use workspace tools (read_file, list_dir, grep, search_replace, run_terminal_cmd) in the sandbox.
+Use platform tools (web_search, web_fetch, knowledge, memory, datetime, calculate).
 For customer business tools (sales, restaurant, tickets…), emit structured tool calls.
 Never invent successful orders, payments, reservations or inventory without a tool result.
 Be proactive, concise and useful in the user's language.
@@ -375,18 +384,24 @@ async def run_agent(
 
     client_tool_names = [t.name for t in tools]
     builtin_names = {d["name"] for d in builtin_tool_definitions()}
+    workspace_names = workspace_tool_names() if studio else set()
     ops_prompt = format_builtin_tools_prompt(client_tool_names)
     if studio:
+        ops_prompt += "\n\n" + format_workspace_tools_prompt()
         ops_prompt += (
-            "\n\nRUNTIME: studio (Agents Morf dashboard). "
-            "You MUST use tools when useful. Client business tools will receive DEMO results "
-            "so you can finish the conversation. Label demo data clearly. "
-            "If WEB_SEARCH_PREFETCH is present below, use it as already-fetched web results."
+            "\n\nRUNTIME: studio (Agents Morf dashboard / Morf Terminal). "
+            "You MUST use tools when useful — like Grok Build. "
+            "Workspace tools (read_file, list_dir, grep, search_replace, run_terminal_cmd) "
+            "EXECUTE FOR REAL in a sandbox. "
+            "Client business tools (sales.*, restaurant.*, …) get DEMO results unless mapped "
+            "to workspace. Label business demos clearly. "
+            "If WEB_SEARCH_PREFETCH is present below, use it as already-fetched web results. "
+            "Start coding tasks with list_dir then read_file."
         )
     else:
         ops_prompt += (
             "\n\nRUNTIME: api. Client tools are NOT executed here — emit tool_call JSON and stop "
-            "until the caller posts tool-results."
+            "until the caller posts tool-results. Platform web/knowledge tools still available."
         )
 
     # Proactive web search when the user clearly asks for internet (all agents, studio).
@@ -484,6 +499,39 @@ async def run_agent(
                 provider_errors=all_errors,
             )
 
+        # --- Grok Build-style workspace tools (studio sandbox, real execution) ---
+        if studio and parsed.name in workspace_names:
+            call = {
+                "id": f"call_{uuid.uuid4().hex}",
+                "name": resolve_canonical_tool(parsed.name) or parsed.name,
+                "arguments": parsed.arguments,
+                "execution_mode": "server",
+                "requires_approval": False,
+                "status": "running",
+                "reason": parsed.reason,
+            }
+            tool_calls.append(call)
+            try:
+                payload = execute_workspace_tool(
+                    organization_id=organization_id,
+                    agent_id=agent.id if agent else None,
+                    name=parsed.name,
+                    arguments=parsed.arguments,
+                )
+                call["status"] = "failed" if payload.get("error") else "success"
+            except Exception as exc:  # noqa: BLE001
+                payload = {"error": str(exc)}
+                call["status"] = "failed"
+            _append_tool_exchange(
+                final_messages,
+                assistant_text=result.content,
+                tool_name=call["name"],
+                status=call["status"],
+                payload=payload if isinstance(payload, dict) else {"value": payload},
+                call_id=call["id"],
+            )
+            continue
+
         # --- Built-in platform tools (always executable) ---
         if parsed.name in builtin_names:
             call = {
@@ -567,8 +615,31 @@ async def run_agent(
                 provider_errors=all_errors,
             )
 
-        # Studio: demo-simulate client tools so the agent finishes the loop.
+        # Studio: map programming tools to real workspace, else demo business tools.
         if is_client and studio:
+            if resolve_canonical_tool(tool.name):
+                try:
+                    payload = execute_workspace_tool(
+                        organization_id=organization_id,
+                        agent_id=agent.id if agent else None,
+                        name=tool.name,
+                        arguments=parsed.arguments,
+                    )
+                    call["status"] = "failed" if payload.get("error") else "success"
+                    call["execution_mode"] = "server"
+                    call["simulated"] = False
+                except Exception as exc:  # noqa: BLE001
+                    payload = {"error": str(exc)}
+                    call["status"] = "failed"
+                _append_tool_exchange(
+                    final_messages,
+                    assistant_text=result.content,
+                    tool_name=tool.name,
+                    status=call["status"],
+                    payload=payload if isinstance(payload, dict) else {"value": payload},
+                    call_id=call["id"],
+                )
+                continue
             demo = simulate_client_tool_result(tool.name, parsed.arguments)
             call["status"] = "simulated"
             call["simulated"] = True

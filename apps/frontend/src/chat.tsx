@@ -299,11 +299,11 @@ export function ChatWorkspace() {
               </p>
               <div className="gpt-suggestions">
                 {[
-                  '¿Qué puedes hacer ahora?',
+                  '¿Qué puedes hacer ahora? (como Grok Build)',
+                  'Lista el workspace y lee README.md',
+                  'Lee src/hello.py, mejóralo y ejecuta python src/hello.py',
                   'Busca en internet: noticias de IA esta semana',
-                  'Busca en la web qué es Agents Morf / multi-agent OS',
                   'Calcula 15% de comisión sobre 2400',
-                  '¿Qué hora es en UTC?',
                   'Simula una cotización de venta del plan Pro',
                 ].map(s => (
                   <button type="button" key={s} className="secondary compact" onClick={() => setInput(s)}>

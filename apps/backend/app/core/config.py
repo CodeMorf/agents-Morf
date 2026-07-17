@@ -93,7 +93,37 @@ class Settings(BaseSettings):
     web_fetch_enabled: bool = True
     web_fetch_max_chars: int = 8000
 
-    @field_validator("cors_origins", "tool_allowed_hosts", mode="before")
+    # Grok Build-style sandboxed workspace agent (Studio/Terminal).
+    workspace_agent_enabled: bool = True
+    workspace_root: str = "storage/workspaces"
+    workspace_shell_enabled: bool = True
+    workspace_shell_timeout_seconds: int = 45
+    workspace_max_file_bytes: int = 512_000
+    workspace_tool_output_chars: int = 20_000
+    workspace_shell_allowlist: list[str] | str = Field(
+        default_factory=lambda: [
+            "python",
+            "python3",
+            "py",
+            "pytest",
+            "npm",
+            "npx",
+            "node",
+            "git",
+            "ls",
+            "dir",
+            "type",
+            "cat",
+            "echo",
+            "pwd",
+            "whoami",
+            "pip",
+            "pip3",
+            "ruff",
+        ]
+    )
+
+    @field_validator("cors_origins", "tool_allowed_hosts", "workspace_shell_allowlist", mode="before")
     @classmethod
     def split_csv_values(cls, value):
         if isinstance(value, str):

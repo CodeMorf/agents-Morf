@@ -260,7 +260,8 @@ print(r.json())`
           <p className="eyebrow">SECURE PLAYGROUND</p>
           <h1>Agents Morf Terminal</h1>
           <p className="muted">
-            Playground seguro para probar agentes, tool calls y tool_results. No es una terminal Linux y no ejecuta comandos del VPS.
+            Playground estilo Grok Build: read_file, list_dir, grep, search_replace y run_terminal_cmd (allowlist) en sandbox real.
+            No es shell libre del VPS. Tools de negocio del cliente: demo o tool_results.
           </p>
         </div>
         <div className="row-actions">

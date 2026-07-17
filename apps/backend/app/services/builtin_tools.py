@@ -558,6 +558,7 @@ async def execute_builtin_tool(
             "web_fetch_enabled": settings.web_fetch_enabled,
             "can_do_now": [
                 "Conversar y razonar con el modelo",
+                "Grok Build-style workspace: read_file, list_dir, grep, search_replace, run_terminal_cmd (sandbox)",
                 "Buscar en Internet (platform.web_search) — todos los agentes",
                 "Leer páginas públicas HTTPS (platform.fetch_url)",
                 "Buscar knowledge (si hay documentos vinculados)",
@@ -567,10 +568,11 @@ async def execute_builtin_tool(
                 "En API: devolver tool_calls para que el backend del cliente ejecute",
             ],
             "cannot_do_on_vps": [
-                "Shell/Linux del servidor Agents Morf",
+                "Shell libre sobre / del VPS (solo sandbox del workspace)",
                 "Pagos reales, email/WhatsApp, CRM, reservas sin backend cliente",
-                "Acceso a red privada / localhost",
+                "Acceso a red privada / localhost del host",
             ],
+            "aligned_with": "https://github.com/xai-org/grok-build tool kinds (Read/List/Search/Edit/Execute/Web)",
         }
 
     return {"error": f"Unknown builtin tool: {name}"}

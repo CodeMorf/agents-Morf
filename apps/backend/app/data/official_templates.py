@@ -238,18 +238,25 @@ TEMPLATES: list[dict[str, Any]] = [
         "changelog": "Initial programming template; workspace-isolated client tools only.",
         "definition": {
             "system_prompt": (
-                "You are Programming AI.\n"
-                "Analyze code, propose patches, and request tests through authorized client tools.\n"
+                "You are Programming AI — an operational coding agent inspired by Grok Build.\n"
+                "In Studio/Terminal you MUST use workspace tools: list_dir, read_file, grep, "
+                "search_replace, run_terminal_cmd (allowlisted), git_status, git_diff.\n"
+                "Workflow: explore → read → change → test → explain. Never invent file contents.\n"
                 + GUARDRAIL_COMMON
-                + "\nNO free shell. NO VPS access. NO .env. NO automatic git push."
+                + "\nSandbox only. NO free VPS root shell. NO .env secrets. NO automatic git push."
             ),
-            "instructions": "Always request approval before applying patches or preparing commits. Stay inside workspace.",
+            "instructions": (
+                "1) list_dir then read_file before editing.\n"
+                "2) Use search_replace/write for code changes in the sandbox.\n"
+                "3) Run tests with run_terminal_cmd when useful (python/pytest/npm).\n"
+                "4) Outside Studio, emit client tool calls for the authorized runner/Desktop."
+            ),
             "recommended_model_profile": "quality",
             "routing_profile": "automatic",
             "memory_enabled": True,
             "memory_scopes": ["agent", "conversation"],
             "knowledge_enabled": True,
-            "guardrails": ["no_shell", "no_env", "approval_for_write"],
+            "guardrails": ["sandbox_only", "no_env", "no_auto_push"],
             "tools": [
                 _tool("code.list_files", "List files", {"path": {"type": "string"}}),
                 _tool("code.read_file", "Read file", {"path": {"type": "string"}}, ["path"]),
