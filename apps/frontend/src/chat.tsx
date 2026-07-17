@@ -33,6 +33,7 @@ export type ChatMessage = {
   memory_hits?: number
   knowledge_hits?: number
   trained?: boolean
+  tool_calls?: Array<{ id?: string; name: string; status?: string; simulated?: boolean; arguments?: Record<string, unknown> }>
 }
 
 type Theme = 'dark' | 'light'
@@ -135,6 +136,8 @@ export function ChatWorkspace() {
           messages: messages.map(m => ({ role: m.role, content: m.content })),
           stream: false,
           remember: true,
+          // Studio: platform tools run for real; client business tools get demo results so the agent finishes.
+          runtime: 'studio',
         }),
       })
     },
@@ -142,16 +145,29 @@ export function ChatWorkspace() {
       const answer = result.choices[0]?.message
       const mem = result.memory_hits ?? 0
       const know = result.knowledge_hits ?? 0
+      const tools = answer?.tool_calls || []
+      const body =
+        answer?.content?.trim() ||
+        (tools.length
+          ? `He ejecutado ${tools.length} acción(es): ${tools.map(t => t.name).join(', ')}. ${
+              tools.some(t => (t as { status?: string }).status === 'simulated' || (t as { simulated?: boolean }).simulated)
+                ? '(incluye resultados DEMO de Studio — en producción tu backend ejecuta las tools de negocio)'
+                : ''
+            }`
+          : 'Sin respuesta del modelo. Revisa proveedores (Groq) o el agente seleccionado.')
       setHistory(h => [
         ...h,
         { role: 'user', content: input },
         {
           role: 'assistant',
-          content:
-            answer?.content ||
-            (answer?.tool_calls?.length
-              ? `[Tool: ${answer.tool_calls.map(t => t.name).join(', ')}]`
-              : ''),
+          content: body,
+          tool_calls: tools.map(t => ({
+            id: t.id,
+            name: t.name,
+            status: t.status,
+            simulated: Boolean((t as { simulated?: boolean }).simulated) || t.status === 'simulated',
+            arguments: t.arguments,
+          })),
           memory_hits: mem,
           knowledge_hits: know,
           trained: Boolean(selectedAgent?.memory_enabled || selectedAgent?.knowledge_enabled),
@@ -222,7 +238,7 @@ export function ChatWorkspace() {
             <p className="eyebrow">CHAT INTELIGENTE</p>
             <h1>{selectedAgent?.name || 'Agents Morf'}</h1>
             <p className="muted">
-              Memoria y entrenamiento corren en el backend. Aquí solo conversas.
+              Agente operativo en modo Studio: busca, calcula, usa memoria/RAG y demo de tools de negocio.
             </p>
           </div>
           <label className="gpt-agent-pick">
@@ -234,6 +250,7 @@ export function ChatWorkspace() {
                 newChat()
               }}
             >
+              {agents.length === 0 && <option value="">Sin agentes — instala una plantilla en /agents</option>}
               {agents.map(a => (
                 <option key={a.id} value={a.id}>
                   {a.name}
@@ -242,6 +259,13 @@ export function ChatWorkspace() {
             </select>
           </label>
         </header>
+
+        {agents.length === 0 && (
+          <div className="warning-banner" style={{ margin: '0 18px 8px' }}>
+            No tienes agentes instalados. Ve a <a href="/agents"><b>Agentes → Catálogo</b></a> y pulsa
+            <b> Usar plantilla</b> (p. ej. Venta AI o Chatbot de soporte). Sin agente, el chat no puede actuar con tools.
+          </div>
+        )}
 
         <div className="gpt-context-bar">
           <span className="gpt-chip">
@@ -255,7 +279,7 @@ export function ChatWorkspace() {
             {selectedAgent?.memory_enabled || selectedAgent?.knowledge_enabled ? 'activo' : 'básico'}
           </span>
           <span className="gpt-chip">
-            <Sparkles size={14} /> Modelo vía backend
+            <Sparkles size={14} /> Studio · tools activos
           </span>
         </div>
 
@@ -265,13 +289,15 @@ export function ChatWorkspace() {
               <Bot size={48} />
               <h2>¿En qué puedo ayudarte?</h2>
               <p className="muted">
-                Chat moderno con lo memorizado y entrenado. Sin administrar memoria a mano.
+                Este agente puede actuar: memoria, knowledge, fecha/cálculos y tools de plantilla (demo en Studio).
               </p>
               <div className="gpt-suggestions">
                 {[
-                  '¿Qué recuerdas de mi empresa?',
-                  'Ayúdame con un mensaje para un cliente',
-                  'Resume lo importante de nuestra base',
+                  '¿Qué puedes hacer ahora? Usa platform.summarize_capabilities',
+                  '¿Qué hora es en UTC? Usa la tool de fecha',
+                  'Calcula 15% de comisión sobre 2400',
+                  'Busca en knowledge y memoria lo de mi empresa',
+                  'Simula una cotización de venta del plan Pro',
                 ].map(s => (
                   <button type="button" key={s} className="secondary compact" onClick={() => setInput(s)}>
                     {s}
@@ -283,8 +309,18 @@ export function ChatWorkspace() {
           {history.map((m, i) => (
             <div key={i} className={`gpt-row ${m.role}`}>
               <div className={`gpt-bubble ${m.role}`}>
-                <b>{m.role === 'user' ? 'Tú' : 'Asistente'}</b>
+                <b>{m.role === 'user' ? 'Tú' : 'Agente'}</b>
                 <p>{m.content}</p>
+                {m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0 && (
+                  <div className="tool-call-list" style={{ marginTop: 10 }}>
+                    {m.tool_calls.map((t, ti) => (
+                      <span key={t.id || ti} className="tool-pill active" title={JSON.stringify(t.arguments || {})}>
+                        ⚡ {t.name}
+                        {t.simulated || t.status === 'simulated' ? ' · demo' : t.status ? ` · ${t.status}` : ''}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 {m.role === 'assistant' && (m.memory_hits != null || m.knowledge_hits != null) && (
                   <div className="gpt-msg-tags">
                     {(m.memory_hits ?? 0) > 0 && (
@@ -300,6 +336,11 @@ export function ChatWorkspace() {
                     {m.trained && (
                       <span>
                         <GraduationCap size={12} /> Entrenado
+                      </span>
+                    )}
+                    {m.provider && (
+                      <span>
+                        <Sparkles size={12} /> {m.provider}/{m.model}
                       </span>
                     )}
                   </div>

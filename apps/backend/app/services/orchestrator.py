@@ -16,11 +16,20 @@ from app.services.hybrid_router import TaskClass, decide, order_configs
 from app.services.knowledge import format_knowledge_context, search_knowledge
 from app.services.memory import format_memory_context, search_memory
 from app.services.providers import ProviderConfig, ProviderError, ProviderResult, complete
+from app.services.builtin_tools import (
+    builtin_tool_definitions,
+    execute_builtin_tool,
+    format_builtin_tools_prompt,
+    simulate_client_tool_result,
+)
 from app.services.tools import execute_tool, format_tools_prompt, parse_tool_call, tools_for_agent
 
-DEFAULT_AGENT_PROMPT = """You are an autonomous business AI agent exposed through the Agents Morf API.
-You converse naturally, follow the configured instructions, use only approved knowledge, and never claim that an external action succeeded unless a tool result confirms it.
-The calling product owns its customers, orders, reservations, email, messaging, payments, and operational databases. You are the reasoning and orchestration layer, not the system of record.
+DEFAULT_AGENT_PROMPT = """You are an operational AI agent on Agents Morf — not a passive FAQ bot.
+Act: understand intent, ask for missing data, call tools when needed, then answer with results.
+Use platform tools (knowledge, memory, datetime, calculate) yourself.
+For customer business tools (sales, restaurant, tickets…), emit structured tool calls.
+Never invent successful orders, payments, reservations or inventory without a tool result.
+Be proactive, concise and useful in the user's language.
 """
 
 
@@ -242,7 +251,12 @@ async def run_agent(
     conversation_id: uuid.UUID | None = None,
     end_user_id: str | None = None,
     force_local: bool = False,
+    runtime: str = "api",
 ) -> AgentRunResult:
+    """runtime=studio: execute platform tools + demo client tools and continue.
+    runtime=api: return client tool_calls for the caller's backend (no fake success).
+    """
+    studio = runtime == "studio"
     system_prompt = agent.system_prompt if agent else DEFAULT_AGENT_PROMPT
     instructions = agent.instructions if agent else ""
     user_query = next(
@@ -271,15 +285,31 @@ async def run_agent(
         tools = await tools_for_agent(db, organization_id, agent.id)
         training_context = await _training_context(db, organization_id, agent.id)
 
+    client_tool_names = [t.name for t in tools]
+    builtin_names = {d["name"] for d in builtin_tool_definitions()}
+    ops_prompt = format_builtin_tools_prompt(client_tool_names)
+    if studio:
+        ops_prompt += (
+            "\n\nRUNTIME: studio (Agents Morf dashboard). "
+            "You MUST use tools when useful. Client business tools will receive DEMO results "
+            "so you can finish the conversation. Label demo data clearly."
+        )
+    else:
+        ops_prompt += (
+            "\n\nRUNTIME: api. Client tools are NOT executed here — emit tool_call JSON and stop "
+            "until the caller posts tool-results."
+        )
+
     context_sections = [
         section
         for section in [
             system_prompt.strip(),
             instructions.strip(),
+            ops_prompt,
             training_context,
             format_memory_context(memory_items),
             format_knowledge_context(knowledge_chunks),
-            format_tools_prompt(tools),
+            format_tools_prompt(tools) if tools else "",
         ]
         if section
     ]
@@ -307,8 +337,9 @@ async def run_agent(
     max_tokens = requested_max_tokens or (agent.max_tokens if agent else 1200)
     tool_calls: list[dict[str, Any]] = []
     all_errors: list[str] = []
+    max_rounds = settings.tool_max_rounds + (2 if studio else 0)
 
-    for round_index in range(settings.tool_max_rounds + 1):
+    for _round_index in range(max_rounds + 1):
         result, errors = await _complete_with_fallback(
             configs, final_messages, temperature, max_tokens, requested_model
         )
@@ -322,6 +353,47 @@ async def run_agent(
                 knowledge_hits=len(knowledge_chunks),
                 provider_errors=all_errors,
             )
+
+        # --- Built-in platform tools (always executable) ---
+        if parsed.name in builtin_names:
+            call = {
+                "id": f"call_{uuid.uuid4().hex}",
+                "name": parsed.name,
+                "arguments": parsed.arguments,
+                "execution_mode": "server",
+                "requires_approval": False,
+                "status": "running",
+                "reason": parsed.reason,
+            }
+            tool_calls.append(call)
+            try:
+                payload = await execute_builtin_tool(
+                    db,
+                    organization_id=organization_id,
+                    agent_id=agent.id if agent else None,
+                    conversation_id=conversation_id,
+                    end_user_id=end_user_id,
+                    name=parsed.name,
+                    arguments=parsed.arguments,
+                    client_tool_names=client_tool_names,
+                )
+                call["status"] = "success"
+            except Exception as exc:  # noqa: BLE001
+                payload = {"error": str(exc)}
+                call["status"] = "failed"
+            final_messages.extend(
+                [
+                    {"role": "assistant", "content": result.content},
+                    {
+                        "role": "tool",
+                        "content": json.dumps(
+                            {"tool": parsed.name, "status": call["status"], "result": payload},
+                            ensure_ascii=False,
+                        ),
+                    },
+                ]
+            )
+            continue
 
         tool = next((candidate for candidate in tools if candidate.name == parsed.name), None)
         if not tool:
@@ -349,13 +421,16 @@ async def run_agent(
         }
         tool_calls.append(call)
 
-        may_execute = bool(
+        is_client = tool.execution_mode == "client" or tool.transport == "client"
+        may_server_execute = bool(
             agent
             and agent.auto_tool_execution
             and tool.execution_mode == "server"
             and (agent.tool_approval_mode == "always" or not tool.requires_approval)
         )
-        if not may_execute:
+
+        # API mode: hand tool_calls back to the customer backend (no fake success).
+        if is_client and not studio:
             return AgentRunResult(
                 provider_result=ProviderResult(
                     content="",
@@ -368,6 +443,46 @@ async def run_agent(
                 knowledge_hits=len(knowledge_chunks),
                 provider_errors=all_errors,
             )
+
+        # Studio: demo-simulate client tools so the agent finishes the loop.
+        if is_client and studio:
+            demo = simulate_client_tool_result(tool.name, parsed.arguments)
+            call["status"] = "simulated"
+            call["simulated"] = True
+            final_messages.extend(
+                [
+                    {"role": "assistant", "content": result.content},
+                    {
+                        "role": "tool",
+                        "content": json.dumps(
+                            {
+                                "tool": tool.name,
+                                "status": "success",
+                                "result": demo,
+                                "simulated": True,
+                            },
+                            ensure_ascii=False,
+                        ),
+                    },
+                ]
+            )
+            continue
+
+        if not may_server_execute:
+            # Server tool but not auto-approved — in studio still try HTTP if configured.
+            if not studio:
+                return AgentRunResult(
+                    provider_result=ProviderResult(
+                        content="",
+                        model=result.model,
+                        provider=result.provider,
+                        usage=result.usage,
+                    ),
+                    tool_calls=tool_calls,
+                    memory_hits=len(memory_items),
+                    knowledge_hits=len(knowledge_chunks),
+                    provider_errors=all_errors,
+                )
 
         execution = await execute_tool(
             db,
@@ -396,6 +511,9 @@ async def run_agent(
             ]
         )
         if execution.status != "completed":
+            if studio:
+                # Keep going with the failure payload so the model can explain.
+                continue
             return AgentRunResult(
                 provider_result=ProviderResult(
                     content=(

@@ -135,6 +135,15 @@ async def chat_completions(
             detail="Only super_admin can force local Ollama for chat",
         )
 
+    # Dashboard JWT sessions default to studio (agent actually runs tools + demos).
+    # API keys default to api (client must execute business tools).
+    if data.runtime in {"studio", "api"}:
+        runtime = data.runtime
+    elif ctx.user is not None and ctx.api_key is None:
+        runtime = "studio"
+    else:
+        runtime = "api"
+
     started = time.perf_counter()
     try:
         run = await run_agent(
@@ -148,6 +157,7 @@ async def chat_completions(
             conversation_id=conversation.id,
             end_user_id=data.end_user_id or conversation.end_user_id,
             force_local=force_local,
+            runtime=runtime,
         )
     except ProviderError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -155,7 +165,26 @@ async def chat_completions(
     fallback_used = bool(run.provider_errors)
     usage_status = "fallback" if fallback_used else "success"
 
-    tool_calls = [ToolCall(**call) for call in run.tool_calls]
+    tool_calls = [
+        ToolCall(
+            **{
+                k: v
+                for k, v in call.items()
+                if k
+                in {
+                    "id",
+                    "name",
+                    "arguments",
+                    "execution_mode",
+                    "requires_approval",
+                    "status",
+                    "reason",
+                    "simulated",
+                }
+            }
+        )
+        for call in run.tool_calls
+    ]
     finish_reason = "tool_calls" if tool_calls and not run.provider_result.content else "stop"
     assistant_message = Message(
         organization_id=ctx.organization.id,

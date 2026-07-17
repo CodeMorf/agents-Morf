@@ -81,6 +81,7 @@ export function TerminalPage() {
         messages,
         stream: false,
         remember: true,
+        runtime: 'studio',
       }
       setLastRequest(body)
       pushLog(`POST /chat/completions agent=${selectedAgent?.slug || activeAgentId}`)

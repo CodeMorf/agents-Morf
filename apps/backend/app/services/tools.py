@@ -74,24 +74,66 @@ def format_tools_prompt(tools: list[Tool]) -> str:
     )
 
 
+def _extract_json_objects(text: str) -> list[str]:
+    """Extract top-level JSON object substrings by brace matching."""
+    found: list[str] = []
+    start = None
+    depth = 0
+    in_str = False
+    escape = False
+    for i, ch in enumerate(text):
+        if start is None:
+            if ch == "{":
+                start = i
+                depth = 1
+                in_str = False
+                escape = False
+            continue
+        if in_str:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start is not None:
+                found.append(text[start : i + 1])
+                start = None
+    return found
+
+
 def parse_tool_call(content: str) -> ParsedToolCall | None:
-    text = content.strip()
+    """Parse a tool_call JSON object; tolerates markdown fences and surrounding text."""
+    text = (content or "").strip()
+    if not text:
+        return None
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.I | re.S).strip()
-    if not text.startswith("{"):
-        return None
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        return None
-    if data.get("type") != "tool_call" or not data.get("tool"):
-        return None
-    arguments = data.get("arguments", {})
-    if not isinstance(arguments, dict):
-        return None
-    return ParsedToolCall(
-        name=str(data["tool"]), arguments=arguments, reason=str(data.get("reason", ""))
-    )
+
+    candidates = [text, *_extract_json_objects(text)]
+    for cand in candidates:
+        try:
+            data = json.loads(cand)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        if data.get("type") != "tool_call" or not data.get("tool"):
+            continue
+        arguments = data.get("arguments", {})
+        if not isinstance(arguments, dict):
+            continue
+        return ParsedToolCall(
+            name=str(data["tool"]), arguments=arguments, reason=str(data.get("reason", ""))
+        )
+    return None
 
 
 def validate_arguments(tool: Tool, arguments: dict[str, Any]) -> None:

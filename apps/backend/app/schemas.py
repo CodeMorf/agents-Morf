@@ -299,6 +299,8 @@ class ToolCall(BaseModel):
     execution_mode: str = "client"
     requires_approval: bool = True
     status: str = "pending"
+    reason: str | None = None
+    simulated: bool = False
 
 
 class ToolExecutionOut(ORMModel):
@@ -524,6 +526,9 @@ class ChatCompletionRequest(BaseModel):
     stream: bool = False
     remember: bool = True
     force_local: bool = False
+    # studio = dashboard/terminal: run platform tools + demo client tools and continue.
+    # api = external backends: return tool_calls for client execution (default for API keys).
+    runtime: Literal["studio", "api"] | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
