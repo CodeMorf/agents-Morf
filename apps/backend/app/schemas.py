@@ -17,6 +17,31 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class RegisterRequest(BaseModel):
+    """Public company registration — creates organization + first owner."""
+
+    organization_name: str = Field(min_length=2, max_length=160)
+    organization_slug: str | None = Field(
+        default=None,
+        pattern=r"^[a-z0-9][a-z0-9-]{1,158}[a-z0-9]$",
+        description="Optional. Auto-generated from organization_name when omitted.",
+    )
+    email: EmailStr
+    password: str = Field(min_length=12, max_length=128)
+    full_name: str = Field(default="", max_length=160)
+    timezone: str = "UTC"
+    locale: str = "es"
+
+
+class RegisterResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    user: "UserOut"
+    organization: "OrganizationOut"
+    message: str = "Organization registered successfully"
+
+
 class RefreshRequest(BaseModel):
     refresh_token: str
 
@@ -362,9 +387,19 @@ class FeedbackPromoteRequest(BaseModel):
     tags: list[str] = Field(default_factory=lambda: ["feedback", "correction"])
 
 
+API_KEY_SCOPES = (
+    "chat:write",
+    "feedback:write",
+    "agents:read",
+    "memory:write",
+    "knowledge:read",
+    "*",
+)
+
+
 class ApiKeyCreate(BaseModel):
     name: str = Field(min_length=2, max_length=160)
-    scopes: list[str] = Field(default_factory=lambda: ["chat:write"])
+    scopes: list[str] = Field(default_factory=lambda: ["chat:write", "feedback:write"])
     expires_at: datetime | None = None
 
 

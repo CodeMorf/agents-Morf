@@ -9,9 +9,25 @@ from app.core.database import get_db
 from app.core.security import generate_api_key, hash_api_key
 from app.dependencies import TenantContext, get_tenant, require_roles
 from app.models import ApiKey, Role
-from app.schemas import ApiKeyCreate, ApiKeyCreated, ApiKeyOut
+from app.schemas import API_KEY_SCOPES, ApiKeyCreate, ApiKeyCreated, ApiKeyOut
 
 router = APIRouter(prefix="/api-keys", tags=["API Keys"])
+
+
+@router.get("/scopes")
+async def list_api_key_scopes(ctx: TenantContext = Depends(get_tenant)):
+    """Available scopes for API key creation (authenticated)."""
+    return {
+        "scopes": list(API_KEY_SCOPES),
+        "descriptions": {
+            "chat:write": "Create chat completions and conversations",
+            "feedback:write": "Submit feedback on agent responses",
+            "agents:read": "List and read agent configuration",
+            "memory:write": "Create memory items",
+            "knowledge:read": "Read knowledge bases",
+            "*": "Full access (use only for trusted backends)",
+        },
+    }
 
 
 @router.get("", response_model=list[ApiKeyOut])
@@ -39,6 +55,11 @@ async def create_api_key(
     ),
     db: AsyncSession = Depends(get_db),
 ):
+    invalid = [s for s in data.scopes if s not in API_KEY_SCOPES]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Invalid scopes: {', '.join(invalid)}")
+    if not data.scopes:
+        raise HTTPException(status_code=400, detail="At least one scope is required")
     raw, prefix = generate_api_key()
     item = ApiKey(
         organization_id=ctx.organization.id,
@@ -76,5 +97,7 @@ async def revoke_api_key(
     ).scalar_one_or_none()
     if not item:
         raise HTTPException(status_code=404, detail="API key not found")
+    if item.revoked_at:
+        raise HTTPException(status_code=400, detail="API key already revoked")
     item.revoked_at = datetime.now(UTC)
     await db.commit()

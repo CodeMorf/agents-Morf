@@ -89,6 +89,79 @@ function Login() {
         {error && <div className="error">{error}</div>}
         <button className="primary">Sign in</button>
       </form>
+      <p className="muted" style={{ marginTop: 16, textAlign: 'center' }}>
+        ¿Empresa nueva? <a href="/register" style={{ color: '#35eddb' }}>Registrar organización</a>
+      </p>
+    </section>
+  </main>
+}
+
+function Register() {
+  const navigate = useNavigate()
+  const { data: regStatus } = useQuery({
+    queryKey: ['registration-status'],
+    queryFn: () => api<{ allow_public_registration: boolean; default_plan: string }>('/auth/registration-status'),
+  })
+  const [form, setForm] = useState({
+    organization_name: '',
+    organization_slug: '',
+    email: '',
+    password: '',
+    full_name: '',
+  })
+  const [error, setError] = useState('')
+  async function submit(event: React.FormEvent) {
+    event.preventDefault()
+    setError('')
+    try {
+      const body: Record<string, string> = {
+        organization_name: form.organization_name,
+        email: form.email,
+        password: form.password,
+        full_name: form.full_name,
+        locale: 'es',
+      }
+      if (form.organization_slug.trim()) body.organization_slug = form.organization_slug.trim()
+      const result = await api<{
+        access_token: string
+        organization: Organization
+      }>('/auth/register', { method: 'POST', body: JSON.stringify(body) })
+      localStorage.setItem('access_token', result.access_token)
+      if (result.organization?.id) localStorage.setItem('organization_id', result.organization.id)
+      navigate('/')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Registration failed')
+    }
+  }
+  if (regStatus && !regStatus.allow_public_registration) {
+    return <main className="login-shell"><section className="login-card">
+      <h1>Registro deshabilitado</h1>
+      <p className="muted">El registro público está desactivado. Contacta al administrador.</p>
+      <a className="primary" href="/login" style={{ display: 'inline-flex', marginTop: 16, textDecoration: 'none' }}>Volver al login</a>
+    </section></main>
+  }
+  return <main className="login-shell">
+    <section className="login-card" style={{ width: 'min(520px, 100%)' }}>
+      <img src="/agents-morf-logo.png" className="login-logo" alt="Agents Morf" />
+      <p className="eyebrow">FASE 2 · ONBOARDING</p>
+      <h1>Registrar empresa</h1>
+      <p className="muted">Crea tu organización y el primer usuario owner. Plan: {regStatus?.default_plan || 'trial'}.</p>
+      <form onSubmit={submit} className="stack">
+        <Field label="Nombre de la empresa" value={form.organization_name} onChange={e => setForm({
+          ...form,
+          organization_name: e.target.value,
+          organization_slug: form.organization_slug || e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
+        })} required />
+        <Field label="Slug (URL)" value={form.organization_slug} onChange={e => setForm({ ...form, organization_slug: e.target.value })} placeholder="mi-empresa" />
+        <Field label="Tu nombre" value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })} />
+        <Field label="Email" type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required />
+        <Field label="Contraseña (mín. 12)" type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required minLength={12} />
+        {error && <div className="error">{error}</div>}
+        <button className="primary">Crear organización</button>
+      </form>
+      <p className="muted" style={{ marginTop: 16, textAlign: 'center' }}>
+        ¿Ya tienes cuenta? <a href="/login" style={{ color: '#35eddb' }}>Iniciar sesión</a>
+      </p>
     </section>
   </main>
 }
@@ -99,6 +172,7 @@ const nav = [
   ['/usage', 'Uso', Activity],
   ['/agents', 'Agents', Bot],
   ['/studio', 'Studio', MessagesSquare],
+  ['/playground', 'Playground', Braces],
   ['/memory', 'Memory', BrainCircuit],
   ['/knowledge', 'Knowledge', BookOpen],
   ['/training', 'Training', TestTube2],
@@ -106,7 +180,7 @@ const nav = [
   ['/tools', 'Tools', Wrench],
   ['/providers', 'Providers', Network],
   ['/api-keys', 'API keys', KeyRound],
-  ['/docs', 'API docs', Braces],
+  ['/docs', 'API docs', BookOpen],
   ['/settings', 'Settings', Settings],
 ] as const
 
@@ -557,30 +631,193 @@ function ProvidersPage() {
   </section>
 }
 
+const DEFAULT_SCOPES = ['chat:write', 'feedback:write', 'agents:read', 'memory:write', 'knowledge:read', '*'] as const
+
 function ApiKeysPage() {
   const queryClient = useQueryClient()
   const { data = [], error } = useQuery({ queryKey: ['api-keys'], queryFn: () => api<ApiKey[]>('/api-keys') })
+  const { data: scopeInfo } = useQuery({
+    queryKey: ['api-key-scopes'],
+    queryFn: () => api<{ scopes: string[]; descriptions: Record<string, string> }>('/api-keys/scopes'),
+  })
   const [name, setName] = useState('')
+  const [scopes, setScopes] = useState<string[]>(['chat:write', 'feedback:write'])
   const [secret, setSecret] = useState('')
-  const create = useMutation({ mutationFn: () => api<ApiKeyCreated>('/api-keys', { method: 'POST', body: JSON.stringify({ name, scopes: ['chat:write', 'feedback:write'] }) }), onSuccess: result => { setSecret(result.key); setName(''); queryClient.invalidateQueries({ queryKey: ['api-keys'] }) } })
+  const available = scopeInfo?.scopes?.length ? scopeInfo.scopes : [...DEFAULT_SCOPES]
+  const create = useMutation({
+    mutationFn: () => api<ApiKeyCreated>('/api-keys', { method: 'POST', body: JSON.stringify({ name, scopes }) }),
+    onSuccess: result => { setSecret(result.key); setName(''); queryClient.invalidateQueries({ queryKey: ['api-keys'] }) },
+  })
+  const revoke = useMutation({
+    mutationFn: (id: string) => api<void>(`/api-keys/${id}`, { method: 'DELETE' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['api-keys'] }),
+  })
+  function toggleScope(scope: string) {
+    setScopes(current => current.includes(scope) ? current.filter(s => s !== scope) : [...current, scope])
+  }
   return <section className="panel">
-    <PageHeader eyebrow="INTEGRATION AUTH" title="API keys" subtitle="Keys let external products consume Agents Morf without sharing dashboard credentials." />
-    <form className="inline-form" onSubmit={e => { e.preventDefault(); create.mutate() }}><input placeholder="Key name, e.g. ALLSENDER production" value={name} onChange={e => setName(e.target.value)} required /><button className="primary compact"><Plus size={16} /> Create key</button></form>
-    {secret && <div className="secret-box"><b>Copy this key now. It will not be shown again.</b><code>{secret}</code><button className="secondary" onClick={() => navigator.clipboard.writeText(secret)}>Copy</button></div>}
-    <ErrorBox error={error || create.error} />
-    <div className="table-wrap"><table><thead><tr><th>Name</th><th>Prefix</th><th>Scopes</th><th>Last used</th><th>Status</th></tr></thead><tbody>{data.map(item => <tr key={item.id}><td><b>{item.name}</b></td><td><code>{item.prefix}…</code></td><td>{item.scopes.join(', ')}</td><td>{item.last_used_at ? new Date(item.last_used_at).toLocaleString() : 'Never'}</td><td>{item.revoked_at ? 'Revoked' : 'Active'}</td></tr>)}</tbody></table></div>
+    <PageHeader eyebrow="INTEGRATION AUTH" title="API keys" subtitle="Crea, revoca y limita scopes. La key completa solo se muestra una vez." />
+    <form className="stack create-box" onSubmit={e => { e.preventDefault(); create.mutate() }}>
+      <Field label="Nombre de la key" value={name} onChange={e => setName(e.target.value)} placeholder="ALLSENDER production" required />
+      <div>
+        <p className="muted" style={{ marginBottom: 8 }}>Scopes</p>
+        <div className="chips">
+          {available.map(scope => (
+            <button type="button" key={scope} className={scopes.includes(scope) ? 'chip-active' : ''} onClick={() => toggleScope(scope)} title={scopeInfo?.descriptions?.[scope] || scope}>
+              {scopes.includes(scope) ? '✓ ' : ''}{scope}
+            </button>
+          ))}
+        </div>
+      </div>
+      <button className="primary compact" disabled={!name || scopes.length === 0}><Plus size={16} /> Create key</button>
+    </form>
+    {secret && <div className="secret-box"><b>Copia esta key ahora. No se volverá a mostrar.</b><code>{secret}</code><button className="secondary" onClick={() => navigator.clipboard.writeText(secret)}>Copy</button></div>}
+    <ErrorBox error={error || create.error || revoke.error} />
+    <div className="table-wrap"><table><thead><tr><th>Name</th><th>Prefix</th><th>Scopes</th><th>Last used</th><th>Status</th><th></th></tr></thead><tbody>{data.map(item => <tr key={item.id}>
+      <td><b>{item.name}</b></td>
+      <td><code>{item.prefix}…</code></td>
+      <td>{item.scopes.join(', ')}</td>
+      <td>{item.last_used_at ? new Date(item.last_used_at).toLocaleString() : 'Never'}</td>
+      <td>{item.revoked_at ? 'Revoked' : 'Active'}</td>
+      <td>{!item.revoked_at && <button className="secondary compact" onClick={() => { if (confirm(`Revocar key ${item.name}?`)) revoke.mutate(item.id) }} disabled={revoke.isPending}>Revoke</button>}</td>
+    </tr>)}</tbody></table></div>
+  </section>
+}
+
+function PlaygroundPage() {
+  const { data: agents = [] } = useQuery({ queryKey: ['agents'], queryFn: () => api<Agent[]>('/agents') })
+  const [agentId, setAgentId] = useState('')
+  const [apiKey, setApiKey] = useState('')
+  const [message, setMessage] = useState('Hola, ¿quién eres?')
+  const [endUserId, setEndUserId] = useState('playground-user')
+  const [raw, setRaw] = useState('')
+  const [meta, setMeta] = useState<{ provider?: string; model?: string; latency?: number; requestId?: string }>({})
+  const [error, setError] = useState('')
+  const send = useMutation({
+    mutationFn: async () => {
+      setError('')
+      const selected = agents.find(a => a.id === agentId)
+      const payload = {
+        agent_id: agentId || undefined,
+        agent: selected?.slug,
+        end_user_id: endUserId || undefined,
+        messages: [{ role: 'user', content: message }],
+        stream: false,
+        remember: false,
+      }
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      const org = localStorage.getItem('organization_id')
+      if (org) headers['X-Organization-ID'] = org
+      if (apiKey.trim()) {
+        headers.Authorization = `Bearer ${apiKey.trim()}`
+      } else {
+        const token = localStorage.getItem('access_token')
+        if (token) headers.Authorization = `Bearer ${token}`
+      }
+      const base = import.meta.env.VITE_API_BASE_URL || '/api/v1'
+      const response = await fetch(`${base}/chat/completions`, { method: 'POST', headers, body: JSON.stringify(payload) })
+      const body = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(body.detail || body.message || `HTTP ${response.status}`)
+      return body as ChatResponse
+    },
+    onSuccess: result => {
+      setRaw(JSON.stringify(result, null, 2))
+      setMeta({
+        provider: result.provider,
+        model: result.model,
+        latency: result.latency_ms,
+        requestId: result.request_id,
+      })
+    },
+    onError: err => setError(err instanceof Error ? err.message : String(err)),
+  })
+  return <section className="panel">
+    <PageHeader eyebrow="API PLAYGROUND" title="Playground seguro" subtitle="Prueba chat/completions como lo haría un backend de producto. No es una terminal del servidor." />
+    <div className="warning-banner">Solo envía JSON a la API de Agents Morf. No hay shell, no hay acceso al VPS.</div>
+    <div className="form-grid create-box">
+      <Select label="Agent" value={agentId} onChange={e => setAgentId(e.target.value)}>
+        <option value="">Default / first agent</option>
+        {agents.map(a => <option key={a.id} value={a.id}>{a.name} ({a.slug})</option>)}
+      </Select>
+      <Field label="End-user ID" value={endUserId} onChange={e => setEndUserId(e.target.value)} />
+      <Field label="API key (opcional, am_…)" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="Vacío = usa sesión del dashboard" />
+      <Textarea label="Mensaje de usuario" value={message} onChange={e => setMessage(e.target.value)} required />
+      <button className="primary" disabled={send.isPending || !message.trim()} onClick={() => send.mutate()}>{send.isPending ? 'Calling…' : 'Run request'}</button>
+    </div>
+    {error && <div className="error">{error}</div>}
+    <div className="run-meta">
+      <span>Provider: {meta.provider || '—'}</span>
+      <span>Model: {meta.model || '—'}</span>
+      <span>Latency: {meta.latency != null ? `${meta.latency} ms` : '—'}</span>
+      <span>Request ID: {meta.requestId || '—'}</span>
+    </div>
+    <h3>Response JSON</h3>
+    <pre>{raw || 'Ejecuta una petición para ver la respuesta.'}</pre>
   </section>
 }
 
 function DocsPage() {
-  const curl = useMemo(() => `curl -X POST https://agent.codemorf.tech/api/v1/chat/completions \\
+  const base = typeof window !== 'undefined' ? window.location.origin : 'https://agent.codemorf.tech'
+  const curl = useMemo(() => `curl -X POST ${base}/api/v1/chat/completions \\
   -H "Authorization: Bearer am_YOUR_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{"agent":"sales-agent","end_user_id":"customer-123","messages":[{"role":"user","content":"Hello"}]}'`, [])
+  -d '{
+    "agent": "agente-morf-demo",
+    "end_user_id": "customer-123",
+    "messages": [{"role": "user", "content": "Hola"}]
+  }'`, [base])
+  const python = useMemo(() => `import requests
+
+url = "${base}/api/v1/chat/completions"
+headers = {
+    "Authorization": "Bearer am_YOUR_KEY",
+    "Content-Type": "application/json",
+}
+payload = {
+    "agent": "agente-morf-demo",
+    "end_user_id": "customer-123",
+    "messages": [{"role": "user", "content": "Hola"}],
+}
+r = requests.post(url, json=payload, headers=headers, timeout=60)
+print(r.status_code, r.json())`, [base])
+  const javascript = useMemo(() => `const res = await fetch("${base}/api/v1/chat/completions", {
+  method: "POST",
+  headers: {
+    "Authorization": "Bearer am_YOUR_KEY",
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    agent: "agente-morf-demo",
+    end_user_id: "customer-123",
+    messages: [{ role: "user", content: "Hola" }],
+  }),
+});
+const data = await res.json();
+console.log(data.provider, data.model, data.choices?.[0]?.message?.content);`, [base])
   return <section className="panel">
-    <PageHeader eyebrow="DEVELOPER EXPERIENCE" title="API documentation" subtitle="FastAPI publishes OpenAPI, Swagger UI and ReDoc automatically." />
-    <div className="three"><a className="doc-card" href="/api/docs" target="_blank"><Braces size={28} /><b>Swagger UI</b><span>Interactive API reference</span></a><a className="doc-card" href="/api/redoc" target="_blank"><BookOpen size={28} /><b>ReDoc</b><span>Readable endpoint documentation</span></a><a className="doc-card" href="/api/openapi.json" target="_blank"><Activity size={28} /><b>OpenAPI JSON</b><span>Generate SDKs and integrations</span></a></div>
-    <h3>OpenAI-compatible request</h3><pre>{curl}</pre>
+    <PageHeader eyebrow="DEVELOPER EXPERIENCE" title="API documentation" subtitle="OpenAPI vivo + ejemplos listos para integrar desde productos externos." />
+    <div className="three">
+      <a className="doc-card" href="/api/docs" target="_blank" rel="noreferrer"><Braces size={28} /><b>Swagger UI</b><span>Interactive API reference</span></a>
+      <a className="doc-card" href="/api/redoc" target="_blank" rel="noreferrer"><BookOpen size={28} /><b>ReDoc</b><span>Readable endpoint documentation</span></a>
+      <a className="doc-card" href="/api/openapi.json" target="_blank" rel="noreferrer"><Activity size={28} /><b>OpenAPI JSON</b><span>Generate SDKs and integrations</span></a>
+    </div>
+    <div className="chips" style={{ margin: '16px 0' }}>
+      <span>Auth: Bearer am_… (API key) o JWT de dashboard</span>
+      <span>Header opcional: X-Organization-ID</span>
+      <span>Chat: POST /api/v1/chat/completions</span>
+    </div>
+    <h3>cURL</h3><pre>{curl}</pre>
+    <h3>Python</h3><pre>{python}</pre>
+    <h3>JavaScript</h3><pre>{javascript}</pre>
+    <h3>Scopes de API key</h3>
+    <div className="table-wrap"><table><thead><tr><th>Scope</th><th>Uso</th></tr></thead><tbody>
+      <tr><td><code>chat:write</code></td><td>Chat completions</td></tr>
+      <tr><td><code>feedback:write</code></td><td>Feedback de respuestas</td></tr>
+      <tr><td><code>agents:read</code></td><td>Leer agentes</td></tr>
+      <tr><td><code>memory:write</code></td><td>Escribir memoria</td></tr>
+      <tr><td><code>knowledge:read</code></td><td>Leer knowledge</td></tr>
+      <tr><td><code>*</code></td><td>Acceso total (solo backends de confianza)</td></tr>
+    </tbody></table></div>
   </section>
 }
 
@@ -600,6 +837,7 @@ function Protected() {
     <Route path="/usage" element={<UsagePage />} />
     <Route path="/agents" element={<AgentsPage />} />
     <Route path="/studio" element={<StudioPage />} />
+    <Route path="/playground" element={<PlaygroundPage />} />
     <Route path="/memory" element={<MemoryPage />} />
     <Route path="/knowledge" element={<KnowledgePage />} />
     <Route path="/training" element={<TrainingPage />} />
@@ -614,5 +852,9 @@ function Protected() {
 }
 
 export default function App() {
-  return <Routes><Route path="/login" element={<Login />} /><Route path="/*" element={<Protected />} /></Routes>
+  return <Routes>
+    <Route path="/login" element={<Login />} />
+    <Route path="/register" element={<Register />} />
+    <Route path="/*" element={<Protected />} />
+  </Routes>
 }

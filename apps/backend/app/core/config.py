@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     default_provider: str = "groq"
     default_model: str = "llama-3.1-8b-instant"
 
+    # Phase 2: public company self-registration (staging can enable; prod may disable)
+    allow_public_registration: bool = True
+    registration_default_plan: str = "trial"
+
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4.1-mini"
