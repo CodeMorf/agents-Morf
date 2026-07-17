@@ -90,6 +90,28 @@ def _wants_web_search(text: str) -> bool:
     )
     return any(k in q for k in keys)
 
+
+def _clean_web_query(text: str) -> str:
+    """Strip chat-intent prefixes so the search engine gets the real topic."""
+    import re
+
+    q = (text or "").strip()
+    patterns = [
+        r"(?i)^\s*busca(r)?\s+en\s+(la\s+)?(web|internet)\s*[:\-]?\s*",
+        r"(?i)^\s*busca(r)?\s+en\s+google\s*[:\-]?\s*",
+        r"(?i)^\s*search\s+(the\s+)?web\s*(for\s+)?[:\-]?\s*",
+        r"(?i)^\s*googlea\s+",
+        r"(?i)^\s*por\s+favor\s+",
+        r"(?i)^\s*puedes\s+",
+        r"(?i)^\s*me\s+puedes\s+",
+        r"[¿?¡!]+",
+    ]
+    for pattern in patterns:
+        q = re.sub(pattern, "", q).strip()
+    # "que es X" / "qué es X" keep the topic with definition intent
+    q = re.sub(r"(?i)^\s*qu[eé]\s+es\s+", "", q).strip() or q
+    return q.strip() or (text or "").strip()
+
 DEFAULT_AGENT_PROMPT = """You are an operational AI agent on Agents Morf — not a passive FAQ bot.
 Act: understand intent, ask for missing data, call tools when needed, then answer with results.
 Use platform tools (knowledge, memory, datetime, calculate) yourself.
@@ -369,11 +391,18 @@ async def run_agent(
 
     # Proactive web search when the user clearly asks for internet (all agents, studio).
     web_prefetch: dict[str, Any] | None = None
+    web_query = _clean_web_query(user_query) if user_query else ""
     if studio and settings.web_search_enabled and user_query and _wants_web_search(user_query):
         try:
-            web_prefetch = await web_search(user_query, settings.web_search_max_results)
+            web_prefetch = await web_search(web_query or user_query, settings.web_search_max_results)
+            # Retry with a shorter topic if first pass empty
+            if not (web_prefetch or {}).get("count") and web_query and web_query != user_query:
+                web_prefetch = await web_search(web_query, settings.web_search_max_results)
+            if web_prefetch is not None:
+                web_prefetch["original_user_message"] = user_query
+                web_prefetch["cleaned_query"] = web_query
         except Exception as exc:  # noqa: BLE001
-            web_prefetch = {"error": str(exc), "query": user_query, "results": []}
+            web_prefetch = {"error": str(exc), "query": web_query or user_query, "results": []}
 
     context_sections = [
         section
@@ -431,7 +460,7 @@ async def run_agent(
             {
                 "id": f"call_prefetch_{uuid.uuid4().hex[:12]}",
                 "name": "platform.web_search",
-                "arguments": {"query": user_query},
+                "arguments": {"query": web_query or user_query},
                 "execution_mode": "server",
                 "requires_approval": False,
                 "status": "success" if web_prefetch.get("count") else "failed",

@@ -211,15 +211,27 @@ async def _assert_public_https(url: str) -> str:
     return url
 
 
+def _normalize_search_query(query: str) -> str:
+    q = (query or "").strip()
+    # Drop common chat prefixes that poison search engines
+    for pattern in (
+        r"(?i)^\s*busca(r)?\s+en\s+(la\s+)?(web|internet)\s*[:\-]?\s*",
+        r"(?i)^\s*search\s+(the\s+)?web\s*(for\s+)?[:\-]?\s*",
+        r"(?i)^\s*googlea\s+",
+        r"[¿?¡!]+",
+    ):
+        q = re.sub(pattern, "", q).strip()
+    q = re.sub(r"(?i)^\s*qu[eé]\s+es\s+", "qué es ", q).strip()
+    return q[:300] if q else (query or "").strip()[:300]
+
+
 async def web_search(query: str, max_results: int | None = None) -> dict[str, Any]:
     """Public web search for ALL agents (DuckDuckGo + Wikipedia fallbacks, no API key)."""
     if not settings.web_search_enabled:
         return {"error": "web_search disabled", "results": []}
-    q = (query or "").strip()
+    q = _normalize_search_query(query)
     if not q:
         return {"error": "query required", "results": []}
-    if len(q) > 300:
-        q = q[:300]
     limit = max(1, min(int(max_results or settings.web_search_max_results), 10))
     results: list[dict[str, str]] = []
     abstract = ""
