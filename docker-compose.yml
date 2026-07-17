@@ -121,6 +121,17 @@ services:
   ollama:
     image: ollama/ollama:latest
     profiles: ["local-ai"]
+    # Protect platform processes: leave ~8 of 12 vCPU free for API/DB/Redis/Nginx
+    cpus: 4.0
+    mem_limit: 10g
+    environment:
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_MAX_QUEUE: "4"
+      OLLAMA_KEEP_ALIVE: "1m"
+      OLLAMA_NUM_THREAD: "4"
+      # Optional: keep context modest on shared VPS
+      OLLAMA_FLASH_ATTENTION: "0"
     volumes:
       - ollama_data:/root/.ollama
     restart: unless-stopped

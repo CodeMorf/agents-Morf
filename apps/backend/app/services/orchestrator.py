@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.security import decrypt_secret
 from app.models import Agent, Provider, TrainingExample
+from app.services.hybrid_router import TaskClass, decide, order_configs
 from app.services.knowledge import format_knowledge_context, search_knowledge
 from app.services.memory import format_memory_context, search_memory
 from app.services.providers import ProviderConfig, ProviderError, ProviderResult, complete
@@ -118,6 +119,7 @@ async def _provider_configs(
                 settings.anthropic_api_key,
             )
         )
+    # Ollama is last by default; hybrid_router may promote it only for light tasks.
     configs.append(
         ProviderConfig("ollama", "Ollama", settings.ollama_base_url, settings.ollama_model, None)
     )
@@ -132,7 +134,9 @@ async def _provider_configs(
                 {"binary_path": settings.grok_build_binary, "cwd": settings.grok_build_cwd},
             )
         )
-    return configs
+    # Default order for chat: external cloud first, Ollama last (CPU protection)
+    decision = decide(TaskClass.conversation, production_conversation=True)
+    return order_configs(configs, decision)
 
 
 async def _training_context(
