@@ -99,19 +99,30 @@ function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
   async function submit(event: React.FormEvent) {
     event.preventDefault()
     setError('')
+    setLoading(true)
     try {
       const tokens = await api<{ access_token: string }>('/auth/login', {
-        method: 'POST', body: JSON.stringify({ email, password }),
+        method: 'POST', body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
       })
       localStorage.setItem('access_token', tokens.access_token)
       const organizations = await api<Organization[]>('/organizations')
       if (organizations[0]) localStorage.setItem('organization_id', organizations[0].id)
       navigate('/')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed')
+      const msg = err instanceof Error ? err.message : 'Login failed'
+      setError(
+        msg.includes('502') || msg.includes('Bad Gateway') || msg.includes('Failed to fetch')
+          ? 'No se pudo conectar con la API (502). El backend está reiniciando — espera 10s e intenta de nuevo.'
+          : msg === 'Invalid email or password'
+            ? 'Email o contraseña incorrectos. Usa las credenciales de Allsender actuales.'
+            : msg,
+      )
+    } finally {
+      setLoading(false)
     }
   }
   return <main className="login-shell">
@@ -121,10 +132,10 @@ function Login() {
       <h1>Agent control plane</h1>
       <p className="muted">Build, train, test and expose autonomous agents through one secure API.</p>
       <form onSubmit={submit} className="stack">
-        <Field label="Email" type="email" value={email} onChange={e => setEmail(e.target.value)} required />
-        <Field label="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} required />
+        <Field label="Email" type="email" value={email} onChange={e => setEmail(e.target.value)} required autoComplete="username" />
+        <Field label="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} required autoComplete="current-password" />
         {error && <div className="error">{error}</div>}
-        <button className="primary">Sign in</button>
+        <button className="primary" disabled={loading}>{loading ? 'Entrando…' : 'Sign in'}</button>
       </form>
       <p className="muted" style={{ marginTop: 12, textAlign: 'center' }}>
         <a href="/forgot-password" style={{ color: '#91a8b8' }}>¿Olvidaste tu contraseña?</a>
