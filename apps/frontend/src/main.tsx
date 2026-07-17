@@ -5,6 +5,9 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import './styles.css'
 
+const savedTheme = localStorage.getItem('am_theme')
+document.documentElement.setAttribute('data-theme', savedTheme === 'light' ? 'light' : 'dark')
+
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 15_000 } } })
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

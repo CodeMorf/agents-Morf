@@ -122,6 +122,14 @@ class UserOut(ORMModel):
     is_superuser: bool
 
 
+class MeOut(UserOut):
+    """Current user plus active organization membership role."""
+
+    role: str | None = None
+    organization_id: uuid.UUID | None = None
+    organization_name: str | None = None
+
+
 class OrganizationCreate(BaseModel):
     name: str = Field(min_length=2, max_length=160)
     slug: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{1,158}[a-z0-9]$")

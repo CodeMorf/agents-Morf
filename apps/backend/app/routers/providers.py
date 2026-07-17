@@ -6,18 +6,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.security import encrypt_secret
-from app.dependencies import TenantContext, get_tenant, require_roles
-from app.models import Provider, Role
+from app.dependencies import TenantContext, get_tenant
+from app.models import Provider
 from app.schemas import ProviderCreate, ProviderOut
 from app.services.providers import ProviderConfig, ProviderError, complete
 
 router = APIRouter(prefix="/providers", tags=["Providers"])
 
 
+def _require_platform_admin(ctx: TenantContext) -> None:
+    """Providers are platform-managed; clients never configure LLM keys in the UI."""
+    if not ctx.user.is_superuser:
+        raise HTTPException(
+            status_code=403,
+            detail="Providers are managed by the platform backend. Clients cannot list or edit them.",
+        )
+
+
 @router.get("", response_model=list[ProviderOut])
 async def list_providers(
     ctx: TenantContext = Depends(get_tenant), db: AsyncSession = Depends(get_db)
 ):
+    _require_platform_admin(ctx)
     return (
         (
             await db.execute(
@@ -34,11 +44,10 @@ async def list_providers(
 @router.post("", response_model=ProviderOut, status_code=201)
 async def create_provider(
     data: ProviderCreate,
-    ctx: TenantContext = Depends(
-        require_roles(Role.organization_owner, Role.organization_admin, Role.developer)
-    ),
+    ctx: TenantContext = Depends(get_tenant),
     db: AsyncSession = Depends(get_db),
 ):
+    _require_platform_admin(ctx)
     values = data.model_dump(exclude={"api_key"})
     provider = Provider(
         organization_id=ctx.organization.id,
@@ -54,11 +63,10 @@ async def create_provider(
 @router.post("/{provider_id}/test")
 async def test_provider(
     provider_id: uuid.UUID,
-    ctx: TenantContext = Depends(
-        require_roles(Role.organization_owner, Role.organization_admin, Role.developer)
-    ),
+    ctx: TenantContext = Depends(get_tenant),
     db: AsyncSession = Depends(get_db),
 ):
+    _require_platform_admin(ctx)
     provider = (
         await db.execute(
             select(Provider).where(

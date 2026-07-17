@@ -3,7 +3,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,12 +32,12 @@ from app.schemas import (
     ForgotPasswordRequest,
     ForgotPasswordResponse,
     LoginRequest,
+    MeOut,
     RefreshRequest,
     RegisterRequest,
     RegisterResponse,
     ResetPasswordRequest,
     TokenPair,
-    UserOut,
 )
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -277,6 +277,52 @@ async def refresh(data: RefreshRequest, db: AsyncSession = Depends(get_db)):
     )
 
 
-@router.get("/me", response_model=UserOut)
-async def me(user: User = Depends(get_current_user)):
-    return user
+@router.get("/me", response_model=MeOut)
+async def me(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    x_organization_id: str | None = Header(default=None, alias="X-Organization-ID"),
+):
+    role: str | None = "super_admin" if user.is_superuser else None
+    organization_id = None
+    organization_name = None
+    membership = None
+    if x_organization_id:
+        try:
+            oid = uuid.UUID(x_organization_id)
+        except ValueError:
+            oid = None
+        if oid:
+            membership = (
+                await db.execute(
+                    select(Membership).where(
+                        Membership.user_id == user.id,
+                        Membership.organization_id == oid,
+                    )
+                )
+            ).scalar_one_or_none()
+            org = await db.get(Organization, oid)
+            if org:
+                organization_id = org.id
+                organization_name = org.name
+    if membership is None:
+        membership = (
+            await db.execute(select(Membership).where(Membership.user_id == user.id).limit(1))
+        ).scalar_one_or_none()
+        if membership:
+            org = await db.get(Organization, membership.organization_id)
+            if org:
+                organization_id = org.id
+                organization_name = org.name
+    if membership is not None and not user.is_superuser:
+        role = membership.role.value if isinstance(membership.role, Role) else str(membership.role)
+    return MeOut(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        is_active=user.is_active,
+        is_superuser=user.is_superuser,
+        role=role,
+        organization_id=organization_id,
+        organization_name=organization_name,
+    )

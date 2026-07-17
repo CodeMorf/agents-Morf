@@ -23,6 +23,8 @@ import {
   MessageCircleWarning,
   Users,
   Wrench,
+  Moon,
+  Sun,
 } from 'lucide-react'
 import {
   Agent,
@@ -45,6 +47,36 @@ import {
   UsageReport,
   api,
 } from './api'
+import { ChatWorkspace, useTheme } from './chat'
+
+type Me = {
+  id: string
+  email: string
+  full_name: string
+  is_superuser: boolean
+  role?: string | null
+  organization_id?: string | null
+  organization_name?: string | null
+}
+
+function useMe() {
+  return useQuery({
+    queryKey: ['me'],
+    queryFn: () => api<Me>('/auth/me'),
+    retry: false,
+  })
+}
+
+/** Platform ops only — clients never see provider keys or LLM catalog management. */
+function isPlatformAdmin(me?: Me | null) {
+  return Boolean(me?.is_superuser)
+}
+
+function isOrgAdmin(me?: Me | null) {
+  if (!me) return false
+  if (me.is_superuser) return true
+  return ['organization_owner', 'organization_admin', 'super_admin'].includes(me.role || '')
+}
 
 type FieldProps = React.InputHTMLAttributes<HTMLInputElement> & { label: string }
 function Field({ label, ...props }: FieldProps) {
@@ -265,41 +297,73 @@ function Register() {
   </main>
 }
 
-const nav = [
-  ['/', 'Overview', Gauge],
-  ['/models', 'Modelos', Sparkles],
-  ['/usage', 'Uso', Activity],
-  ['/agents', 'Agents', Bot],
-  ['/studio', 'Studio', MessagesSquare],
-  ['/playground', 'Playground', Braces],
-  ['/memory', 'Memory', BrainCircuit],
-  ['/knowledge', 'Knowledge', BookOpen],
-  ['/training', 'Training', TestTube2],
-  ['/feedback', 'Feedback', MessageCircleWarning],
-  ['/tools', 'Tools', Wrench],
-  ['/providers', 'Providers', Network],
-  ['/api-keys', 'API keys', KeyRound],
-  ['/members', 'Members', Users],
-  ['/docs', 'API docs', BookOpen],
-  ['/settings', 'Settings', Settings],
-] as const
+type NavItem = { to: string; label: string; icon: typeof Gauge; when?: 'always' | 'org_admin' | 'platform' }
 
-function Layout({ children }: { children: React.ReactNode }) {
+const navItems: NavItem[] = [
+  { to: '/', label: 'Chat', icon: MessagesSquare, when: 'always' },
+  { to: '/agents', label: 'Agentes', icon: Bot, when: 'always' },
+  { to: '/docs', label: 'API docs', icon: BookOpen, when: 'always' },
+  { to: '/api-keys', label: 'API keys', icon: KeyRound, when: 'org_admin' },
+  { to: '/members', label: 'Equipo', icon: Users, when: 'org_admin' },
+  { to: '/usage', label: 'Uso', icon: Activity, when: 'org_admin' },
+  { to: '/knowledge', label: 'Knowledge', icon: Database, when: 'org_admin' },
+  { to: '/memory', label: 'Memory', icon: BrainCircuit, when: 'org_admin' },
+  { to: '/training', label: 'Training', icon: TestTube2, when: 'org_admin' },
+  { to: '/feedback', label: 'Feedback', icon: MessageCircleWarning, when: 'org_admin' },
+  { to: '/tools', label: 'Tools', icon: Wrench, when: 'org_admin' },
+  { to: '/models', label: 'Modelos', icon: Sparkles, when: 'platform' },
+  { to: '/providers', label: 'Providers', icon: Network, when: 'platform' },
+  { to: '/playground', label: 'Playground', icon: Braces, when: 'platform' },
+  { to: '/studio', label: 'Studio lab', icon: Gauge, when: 'platform' },
+  { to: '/settings', label: 'Settings', icon: Settings, when: 'org_admin' },
+]
+
+function Layout({ children, fullBleed = false }: { children: React.ReactNode; fullBleed?: boolean }) {
   const navigate = useNavigate()
-  return <div className="app-shell">
+  const { data: me } = useMe()
+  const [theme, toggleTheme] = useTheme()
+  const visible = navItems.filter(item => {
+    if (item.when === 'platform') return isPlatformAdmin(me)
+    if (item.when === 'org_admin') return isOrgAdmin(me)
+    return true
+  })
+  return <div className={fullBleed ? 'app-shell chat-mode' : 'app-shell'}>
     <aside>
       <div className="brand">
         <img src="/agents-morf-logo.png" alt="Agents Morf" />
-        <div><strong>Agents Morf</strong><small>CodeMorf AI Platform</small></div>
+        <div>
+          <strong>Agents Morf</strong>
+          <small>{me?.organization_name || 'CodeMorf AI'}</small>
+        </div>
       </div>
-      <nav>{nav.map(([to, label, Icon]) => <NavLink key={to} to={to} end={to === '/'}><Icon size={18} />{label}</NavLink>)}</nav>
-      <button className="logout" onClick={() => { localStorage.clear(); navigate('/login') }}><LogOut size={18} /> Sign out</button>
+      <nav>
+        {visible.map(({ to, label, icon: Icon }) => (
+          <NavLink key={to} to={to} end={to === '/'}>
+            <Icon size={18} />{label}
+          </NavLink>
+        ))}
+      </nav>
+      <div className="aside-foot">
+        <button type="button" className="theme-toggle" onClick={toggleTheme}>
+          {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+          {theme === 'dark' ? 'Modo claro' : 'Modo oscuro'}
+        </button>
+        <p className="muted user-chip">{me?.email}</p>
+        <button className="logout" onClick={() => { localStorage.clear(); navigate('/login') }}>
+          <LogOut size={18} /> Salir
+        </button>
+      </div>
     </aside>
-    <section className="workspace">
-      <header>
-        <div><p className="eyebrow">AGENT.CODEMORF.TECH</p><h2>Autonomous agent infrastructure</h2></div>
-        <span className="status"><i /> API online</span>
-      </header>
+    <section className={fullBleed ? 'workspace workspace-bleed' : 'workspace'}>
+      {!fullBleed && (
+        <header>
+          <div>
+            <p className="eyebrow">AGENT.CODEMORF.TECH</p>
+            <h2>{me?.is_superuser ? 'Platform control' : 'Espacio de trabajo'}</h2>
+          </div>
+          <span className="status"><i /> API online</span>
+        </header>
+      )}
       {children}
     </section>
   </div>
@@ -1084,27 +1148,44 @@ function SettingsPage() {
   </section>
 }
 
+function PlatformOnly({ children }: { children: React.ReactNode }) {
+  const { data: me, isLoading } = useMe()
+  if (isLoading) return <div className="panel">Cargando…</div>
+  if (!isPlatformAdmin(me)) return <Navigate to="/" replace />
+  return <>{children}</>
+}
+
+function OrgAdminOnly({ children }: { children: React.ReactNode }) {
+  const { data: me, isLoading } = useMe()
+  if (isLoading) return <div className="panel">Cargando…</div>
+  if (!isOrgAdmin(me)) return <Navigate to="/" replace />
+  return <>{children}</>
+}
+
 function Protected() {
   if (!localStorage.getItem('access_token')) return <Navigate to="/login" replace />
-  return <Layout><Routes>
-    <Route path="/" element={<Overview />} />
-    <Route path="/models" element={<ModelsPage />} />
-    <Route path="/usage" element={<UsagePage />} />
-    <Route path="/agents" element={<AgentsPage />} />
-    <Route path="/studio" element={<StudioPage />} />
-    <Route path="/playground" element={<PlaygroundPage />} />
-    <Route path="/memory" element={<MemoryPage />} />
-    <Route path="/knowledge" element={<KnowledgePage />} />
-    <Route path="/training" element={<TrainingPage />} />
-    <Route path="/feedback" element={<FeedbackPage />} />
-    <Route path="/tools" element={<ToolsPage />} />
-    <Route path="/providers" element={<ProvidersPage />} />
-    <Route path="/api-keys" element={<ApiKeysPage />} />
-    <Route path="/members" element={<MembersPage />} />
-    <Route path="/docs" element={<DocsPage />} />
-    <Route path="/settings" element={<SettingsPage />} />
-    <Route path="*" element={<Navigate to="/" />} />
-  </Routes></Layout>
+  return (
+    <Routes>
+      <Route path="/" element={<Layout fullBleed><ChatWorkspace /></Layout>} />
+      <Route path="/agents" element={<Layout><AgentsPage /></Layout>} />
+      <Route path="/docs" element={<Layout><DocsPage /></Layout>} />
+      <Route path="/api-keys" element={<Layout><OrgAdminOnly><ApiKeysPage /></OrgAdminOnly></Layout>} />
+      <Route path="/members" element={<Layout><OrgAdminOnly><MembersPage /></OrgAdminOnly></Layout>} />
+      <Route path="/usage" element={<Layout><OrgAdminOnly><UsagePage /></OrgAdminOnly></Layout>} />
+      <Route path="/knowledge" element={<Layout><OrgAdminOnly><KnowledgePage /></OrgAdminOnly></Layout>} />
+      <Route path="/memory" element={<Layout><OrgAdminOnly><MemoryPage /></OrgAdminOnly></Layout>} />
+      <Route path="/training" element={<Layout><OrgAdminOnly><TrainingPage /></OrgAdminOnly></Layout>} />
+      <Route path="/feedback" element={<Layout><OrgAdminOnly><FeedbackPage /></OrgAdminOnly></Layout>} />
+      <Route path="/tools" element={<Layout><OrgAdminOnly><ToolsPage /></OrgAdminOnly></Layout>} />
+      <Route path="/settings" element={<Layout><OrgAdminOnly><SettingsPage /></OrgAdminOnly></Layout>} />
+      <Route path="/models" element={<Layout><PlatformOnly><ModelsPage /></PlatformOnly></Layout>} />
+      <Route path="/providers" element={<Layout><PlatformOnly><ProvidersPage /></PlatformOnly></Layout>} />
+      <Route path="/playground" element={<Layout><PlatformOnly><PlaygroundPage /></PlatformOnly></Layout>} />
+      <Route path="/studio" element={<Layout><PlatformOnly><StudioPage /></PlatformOnly></Layout>} />
+      <Route path="/overview" element={<Layout><Overview /></Layout>} />
+      <Route path="*" element={<Navigate to="/" />} />
+    </Routes>
+  )
 }
 
 export default function App() {
