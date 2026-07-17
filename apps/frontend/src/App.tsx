@@ -1096,6 +1096,8 @@ function MembersPage() {
 
 function SettingsPage() {
   const queryClient = useQueryClient()
+  const { data: me } = useMe()
+  const platform = isPlatformAdmin(me)
   const { data, error } = useQuery({
     queryKey: ['org-current'],
     queryFn: () => api<{ organization: Organization & { plan: string }; quota: QuotaStatus; plan_defaults: Record<string, unknown> }>('/organizations/current'),
@@ -1119,32 +1121,55 @@ function SettingsPage() {
     }),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['org-current'] }); queryClient.invalidateQueries({ queryKey: ['usage'] }) },
   })
+  const q = data?.quota
   return <section className="panel">
-    <PageHeader eyebrow="PLATFORM BOUNDARY" title="Settings & quotas" subtitle="Plan, límites diarios y arquitectura. Exceso de cuota devuelve HTTP 429 en chat/agents/keys." />
+    <PageHeader
+      eyebrow="ORGANIZACIÓN"
+      title="Settings"
+      subtitle={platform
+        ? 'Solo super admin de plataforma puede asignar planes y cuotas a clientes.'
+        : 'Tu plan y límites los define CodeMorf. Aquí solo ves el uso y el plan asignado.'}
+    />
     <ErrorBox error={error || save.error} />
     {data && <div className="create-box">
       <p className="muted">Organización: <b>{data.organization.name}</b> · slug <code>{data.organization.slug}</code></p>
-      <form className="form-grid" onSubmit={e => { e.preventDefault(); save.mutate() }}>
-        <Select label="Plan" value={form.plan} onChange={e => setForm({ ...form, plan: e.target.value })}>
-          <option value="trial">trial</option>
-          <option value="starter">starter</option>
-          <option value="pro">pro</option>
-          <option value="enterprise">enterprise</option>
-        </Select>
-        <label className="checkbox-row"><input type="checkbox" checked={form.enabled} onChange={e => setForm({ ...form, enabled: e.target.checked })} /> Cuotas activas</label>
-        <Field label="Requests / día" type="number" value={form.requests_per_day} onChange={e => setForm({ ...form, requests_per_day: Number(e.target.value) })} />
-        <Field label="Tokens / día" type="number" value={form.tokens_per_day} onChange={e => setForm({ ...form, tokens_per_day: Number(e.target.value) })} />
-        <Field label="Max agents" type="number" value={form.max_agents} onChange={e => setForm({ ...form, max_agents: Number(e.target.value) })} />
-        <Field label="Max API keys" type="number" value={form.max_api_keys} onChange={e => setForm({ ...form, max_api_keys: Number(e.target.value) })} />
-        <button className="primary compact" disabled={save.isPending}>{save.isPending ? 'Guardando…' : 'Guardar cuotas'}</button>
-      </form>
-      {data.quota && <div className="chips" style={{ marginTop: 12 }}>
-        <span>Usado hoy: {data.quota.used.requests_today} req · {data.quota.used.tokens_today} tokens</span>
-        <span>Restante: {data.quota.remaining?.requests_today ?? '—'} req</span>
-      </div>}
+      {!platform && q && (
+        <>
+          <div className="warning-banner">
+            El plan y las cuotas los gestiona la plataforma. Si necesitas más capacidad, contacta a CodeMorf.
+          </div>
+          <div className="metric-grid">
+            <article className="metric"><span>Plan asignado</span><strong>{q.plan}</strong></article>
+            <article className="metric"><span>Req / día</span><strong>{q.used.requests_today} / {q.quotas.requests_per_day}</strong></article>
+            <article className="metric"><span>Tokens / día</span><strong>{q.used.tokens_today} / {q.quotas.tokens_per_day}</strong></article>
+            <article className="metric"><span>Agentes</span><strong>{q.used.agents_count} / {q.quotas.max_agents}</strong></article>
+            <article className="metric"><span>API keys</span><strong>{q.used.api_keys_count} / {q.quotas.max_api_keys}</strong></article>
+          </div>
+          <div className="chips" style={{ marginTop: 12 }}>
+            <span>Restante hoy: {q.remaining?.requests_today ?? '—'} requests</span>
+            {q.resets_at && <span>Reinicio cuota: {new Date(q.resets_at).toLocaleString()}</span>}
+          </div>
+        </>
+      )}
+      {platform && (
+        <form className="form-grid" onSubmit={e => { e.preventDefault(); save.mutate() }}>
+          <p className="muted" style={{ gridColumn: '1 / -1' }}>Editor de plataforma (super_admin). Los clientes no ven este formulario.</p>
+          <Select label="Plan" value={form.plan} onChange={e => setForm({ ...form, plan: e.target.value })}>
+            <option value="trial">trial</option>
+            <option value="starter">starter</option>
+            <option value="pro">pro</option>
+            <option value="enterprise">enterprise</option>
+          </Select>
+          <label className="checkbox-row"><input type="checkbox" checked={form.enabled} onChange={e => setForm({ ...form, enabled: e.target.checked })} /> Cuotas activas</label>
+          <Field label="Requests / día" type="number" value={form.requests_per_day} onChange={e => setForm({ ...form, requests_per_day: Number(e.target.value) })} />
+          <Field label="Tokens / día" type="number" value={form.tokens_per_day} onChange={e => setForm({ ...form, tokens_per_day: Number(e.target.value) })} />
+          <Field label="Max agents" type="number" value={form.max_agents} onChange={e => setForm({ ...form, max_agents: Number(e.target.value) })} />
+          <Field label="Max API keys" type="number" value={form.max_api_keys} onChange={e => setForm({ ...form, max_api_keys: Number(e.target.value) })} />
+          <button className="primary compact" disabled={save.isPending}>{save.isPending ? 'Guardando…' : 'Guardar cuotas (plataforma)'}</button>
+        </form>
+      )}
     </div>}
-    <div className="architecture-flow" style={{ marginTop: 20 }}><div>External products</div><span>→</span><div>Agents Morf API</div><span>→</span><div>Quota · Memory · RAG · Models</div><span>→</span><div>Structured response</div></div>
-    <div className="three"><div><b>429 on limit</b><p>Chat, agent create and API key create enforce daily/plan quotas.</p></div><div><b>No SMTP coupling</b><p>Email remains outside Agents Morf until wired intentionally.</p></div><div><b>Plans are config</b><p>trial/starter/pro/enterprise defaults can be overridden per org.</p></div></div>
+    <div className="architecture-flow" style={{ marginTop: 20 }}><div>Cliente</div><span>→</span><div>Agents Morf</div><span>→</span><div>Plan fijado por CodeMorf</div><span>→</span><div>Groq en backend</div></div>
   </section>
 }
 

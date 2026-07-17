@@ -3,8 +3,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.dependencies import TenantContext, get_current_user, get_tenant, require_roles
-from app.models import Membership, Organization, Role, User
+from app.dependencies import TenantContext, get_current_user, get_tenant
+from app.models import Membership, Organization, User
 from app.schemas import OrganizationCreate, OrganizationOut, OrganizationQuotasUpdate
 from app.services.quotas import PLAN_DEFAULTS, quota_status
 
@@ -63,12 +63,46 @@ async def current_quota(
 @router.patch("/current/quota")
 async def update_current_quota(
     data: OrganizationQuotasUpdate,
-    ctx: TenantContext = Depends(
-        require_roles(Role.organization_owner, Role.organization_admin)
-    ),
+    ctx: TenantContext = Depends(get_tenant),
     db: AsyncSession = Depends(get_db),
 ):
+    """Only platform super_admin may change plans/quotas. Tenants see limits read-only."""
+    if not ctx.user.is_superuser:
+        raise HTTPException(
+            status_code=403,
+            detail="Plans and quotas are managed by the platform. Contact CodeMorf support.",
+        )
     org = ctx.organization
+    if data.plan is not None:
+        org.plan = data.plan.strip().lower() or org.plan
+    settings = dict(org.settings or {})
+    quotas = dict(settings.get("quotas") or {})
+    payload = data.model_dump(exclude_none=True, exclude={"plan"})
+    quotas.update(payload)
+    settings["quotas"] = quotas
+    org.settings = settings
+    await db.commit()
+    await db.refresh(org)
+    return await quota_status(db, org)
+
+
+@router.patch("/{organization_id}/quota")
+async def update_organization_quota(
+    organization_id: str,
+    data: OrganizationQuotasUpdate,
+    ctx: TenantContext = Depends(get_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    """Platform super_admin assigns plan/quotas to any tenant organization."""
+    if not ctx.user.is_superuser:
+        raise HTTPException(status_code=403, detail="Platform super_admin required")
+    try:
+        oid = __import__("uuid").UUID(organization_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid organization id") from exc
+    org = await db.get(Organization, oid)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
     if data.plan is not None:
         org.plan = data.plan.strip().lower() or org.plan
     settings = dict(org.settings or {})

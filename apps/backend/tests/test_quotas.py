@@ -27,7 +27,7 @@ def _register(client: TestClient):
     return body["access_token"], body["organization"]["id"]
 
 
-def test_quota_status_and_override():
+def test_quota_status_and_client_cannot_override():
     with TestClient(app) as client:
         token, org_id = _register(client)
         headers = {"Authorization": f"Bearer {token}", "X-Organization-ID": org_id}
@@ -39,14 +39,13 @@ def test_quota_status_and_override():
         assert body["quotas"]["requests_per_day"] == 200
         assert "remaining" in body
 
-        # tighten requests to 1
+        # Tenant must NOT change plan/quotas
         patch = client.patch(
             "/api/v1/organizations/current/quota",
             headers=headers,
-            json={"requests_per_day": 1},
+            json={"requests_per_day": 1, "plan": "enterprise"},
         )
-        assert patch.status_code == 200, patch.text
-        assert patch.json()["quotas"]["requests_per_day"] == 1
+        assert patch.status_code == 403, patch.text
 
 
 def test_agent_quota_enforced():
@@ -57,11 +56,22 @@ def test_agent_quota_enforced():
             "X-Organization-ID": org_id,
             "Content-Type": "application/json",
         }
-        client.patch(
-            "/api/v1/organizations/current/quota",
-            headers=headers,
-            json={"max_agents": 1},
-        )
+        # Simulate platform-assigned tight limit via DB settings
+        from app.core.database import SessionLocal
+        from app.models import Organization
+        import asyncio
+
+        async def tighten():
+            async with SessionLocal() as db:
+                org = await db.get(Organization, __import__("uuid").UUID(org_id))
+                assert org is not None
+                settings = dict(org.settings or {})
+                settings["quotas"] = {"max_agents": 1, "enabled": True}
+                org.settings = settings
+                await db.commit()
+
+        asyncio.run(tighten())
+
         a1 = client.post(
             "/api/v1/agents",
             headers=headers,
