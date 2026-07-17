@@ -122,6 +122,10 @@ class Settings(BaseSettings):
             "ruff",
         ]
     )
+    # Controlled SSH for Studio (Grok-like remote ops). Never log passwords.
+    workspace_ssh_enabled: bool = True
+    workspace_ssh_timeout_seconds: int = 45
+    workspace_ssh_max_output_chars: int = 20_000
 
     @field_validator("cors_origins", "tool_allowed_hosts", "workspace_shell_allowlist", mode="before")
     @classmethod

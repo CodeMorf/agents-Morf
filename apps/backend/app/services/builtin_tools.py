@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.services.knowledge import search_knowledge
 from app.services.memory import search_memory
+from app.services.remote_ssh import format_ssh_tools_prompt, ssh_tool_definitions
 
 # Operators allowed in calculator (no builtins, no attributes).
 _BINOPS = {
@@ -137,6 +138,7 @@ def builtin_tool_definitions() -> list[dict[str, Any]]:
         tools = [t for t in tools if t["name"] != "platform.web_search"]
     if not settings.web_fetch_enabled:
         tools = [t for t in tools if t["name"] != "platform.fetch_url"]
+    tools.extend(ssh_tool_definitions())
     return tools
 
 
@@ -147,10 +149,13 @@ def format_builtin_tools_prompt(extra_client_tools: list[str] | None = None) -> 
         "When the user asks for facts from knowledge/memory, CALL a tool instead of inventing.",
         "When the user asks about the live web, news, public info, or anything current, "
         "CALL platform.web_search (and platform.fetch_url if you need the page body).",
+        "When the user provides SSH host/user/password (ssh user@host, Clave/password), "
+        "CALL platform.ssh_test then platform.ssh_exec. Do NOT refuse remote access in Studio.",
         "When you need time/math, CALL platform tools.",
         "After tool results, give a clear natural-language answer with sources when from web.",
         "Never claim a customer business action (order, payment, reservation, email) succeeded "
         "unless a tool_result confirms it.",
+        "Never repeat passwords in the final answer — redact them.",
         "If a business tool is only available on the client and you are in studio demo, "
         "you may receive a simulated result marked simulated=true — say it is a demo result.",
         "Respond with ONLY one JSON object when calling a tool:",
@@ -160,6 +165,9 @@ def format_builtin_tools_prompt(extra_client_tools: list[str] | None = None) -> 
     ]
     for d in defs:
         lines.append(f"- {d['name']}: {d['description']}")
+    ssh_note = format_ssh_tools_prompt()
+    if ssh_note:
+        lines.append(ssh_note)
     if extra_client_tools:
         lines.append("CLIENT BUSINESS TOOLS (customer backend or studio demo):")
         for name in extra_client_tools:
@@ -476,6 +484,11 @@ async def execute_builtin_tool(
     arguments: dict[str, Any],
     client_tool_names: list[str] | None = None,
 ) -> dict[str, Any]:
+    if name in {"platform.ssh_test", "platform.ssh_exec"}:
+        from app.services.remote_ssh import execute_ssh_tool
+
+        return execute_ssh_tool(name, arguments)
+
     if name == "platform.web_search":
         return await web_search(
             str(arguments.get("query") or ""),

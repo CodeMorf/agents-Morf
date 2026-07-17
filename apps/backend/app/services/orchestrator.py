@@ -24,6 +24,7 @@ from app.services.builtin_tools import (
     web_search,
 )
 from app.services.tools import execute_tool, format_tools_prompt, parse_tool_call, tools_for_agent
+from app.services.remote_ssh import execute_ssh_tool, parse_ssh_hint_from_user_text
 from app.services.workspace_agent import (
     execute_workspace_tool,
     format_workspace_tools_prompt,
@@ -120,12 +121,15 @@ def _clean_web_query(text: str) -> str:
 
 DEFAULT_AGENT_PROMPT = """You are an operational AI agent on Agents Morf — not a passive FAQ bot.
 You work like Grok Build (xai-org/grok-build): explore, read, search, edit, run allowed commands,
-search the web, and finish with a clear answer grounded in tool results.
+search the web, connect via SSH when the user provides host credentials, and finish with tool results.
 Act: understand intent, gather missing data, CALL tools, then answer with results.
 Use workspace tools (read_file, list_dir, grep, search_replace, run_terminal_cmd) in the sandbox.
+Use platform.ssh_test / platform.ssh_exec when the user asks to enter a remote server (ssh user@host + password).
 Use platform tools (web_search, web_fetch, knowledge, memory, datetime, calculate).
 For customer business tools (sales, restaurant, tickets…), emit structured tool calls.
 Never invent successful orders, payments, reservations or inventory without a tool result.
+Never refuse SSH in Studio when credentials are provided — call the tools.
+Never print passwords back to the user.
 Be proactive, concise and useful in the user's language.
 """
 
@@ -419,6 +423,15 @@ async def run_agent(
         except Exception as exc:  # noqa: BLE001
             web_prefetch = {"error": str(exc), "query": web_query or user_query, "results": []}
 
+    # Proactive SSH test when user pastes ssh user@host + password (Studio only).
+    ssh_prefetch: dict[str, Any] | None = None
+    ssh_hint = parse_ssh_hint_from_user_text(user_query) if studio and user_query else None
+    if studio and settings.workspace_ssh_enabled and ssh_hint:
+        try:
+            ssh_prefetch = execute_ssh_tool("platform.ssh_test", ssh_hint)
+        except Exception as exc:  # noqa: BLE001
+            ssh_prefetch = {"ok": False, "error": str(exc), "host": ssh_hint.get("host")}
+
     context_sections = [
         section
         for section in [
@@ -433,6 +446,12 @@ async def run_agent(
                 "WEB_SEARCH_PREFETCH (already executed by Agents Morf — cite sources):\n"
                 + json.dumps(web_prefetch, ensure_ascii=False)[:6000]
                 if web_prefetch
+                else ""
+            ),
+            (
+                "SSH_TEST_PREFETCH (already executed — password redacted; report connectivity):\n"
+                + json.dumps(ssh_prefetch, ensure_ascii=False)[:4000]
+                if ssh_prefetch
                 else ""
             ),
         ]
@@ -480,6 +499,23 @@ async def run_agent(
                 "requires_approval": False,
                 "status": "success" if web_prefetch.get("count") else "failed",
                 "reason": "prefetch_on_web_intent",
+                "simulated": False,
+            }
+        )
+    if ssh_prefetch is not None:
+        tool_calls.append(
+            {
+                "id": f"call_ssh_prefetch_{uuid.uuid4().hex[:10]}",
+                "name": "platform.ssh_test",
+                "arguments": {
+                    "host": (ssh_hint or {}).get("host"),
+                    "username": (ssh_hint or {}).get("username"),
+                    "password": "***",
+                },
+                "execution_mode": "server",
+                "requires_approval": False,
+                "status": "success" if ssh_prefetch.get("ok") else "failed",
+                "reason": "prefetch_on_ssh_intent",
                 "simulated": False,
             }
         )

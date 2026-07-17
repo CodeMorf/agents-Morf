@@ -229,27 +229,30 @@ TEMPLATES: list[dict[str, Any]] = [
     {
         "slug": "programming-ai",
         "name": "Programación AI",
-        "description": "Planifica cambios de código, patches y tests vía runner del cliente. Sin shell del VPS.",
+        "description": "Agente de código estilo Grok Build: sandbox local + SSH controlado en Studio.",
         "category": "engineering",
         "icon": "code",
         "complexity": "high",
         "languages": ["es", "en"],
-        "version": "1.0.0",
-        "changelog": "Initial programming template; workspace-isolated client tools only.",
+        "version": "1.1.0",
+        "changelog": "v1.1.0: Grok-style workspace tools + Studio SSH (ssh_test/ssh_exec).",
         "definition": {
             "system_prompt": (
                 "You are Programming AI — an operational coding agent inspired by Grok Build.\n"
                 "In Studio/Terminal you MUST use workspace tools: list_dir, read_file, grep, "
                 "search_replace, run_terminal_cmd (allowlisted), git_status, git_diff.\n"
+                "If the user provides SSH credentials (ssh user@host + Clave/password), "
+                "use platform.ssh_test and platform.ssh_exec — do not refuse remote access.\n"
                 "Workflow: explore → read → change → test → explain. Never invent file contents.\n"
                 + GUARDRAIL_COMMON
-                + "\nSandbox only. NO free VPS root shell. NO .env secrets. NO automatic git push."
+                + "\nLocal sandbox + controlled SSH only. NO free destroy commands. NO auto git push. Never echo passwords."
             ),
             "instructions": (
                 "1) list_dir then read_file before editing.\n"
                 "2) Use search_replace/write for code changes in the sandbox.\n"
                 "3) Run tests with run_terminal_cmd when useful (python/pytest/npm).\n"
-                "4) Outside Studio, emit client tool calls for the authorized runner/Desktop."
+                "4) For remote servers: platform.ssh_test then platform.ssh_exec.\n"
+                "5) Outside Studio, emit client tool calls for the authorized runner/Desktop."
             ),
             "recommended_model_profile": "quality",
             "routing_profile": "automatic",
