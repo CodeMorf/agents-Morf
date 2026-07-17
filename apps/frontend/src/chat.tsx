@@ -243,7 +243,7 @@ export function ChatWorkspace() {
             <p className="eyebrow">CHAT INTELIGENTE</p>
             <h1>{selectedAgent?.name || 'Agents Morf'}</h1>
             <p className="muted">
-              Agente operativo en modo Studio: busca, calcula, usa memoria/RAG y demo de tools de negocio.
+              Conversa con el agente. Si necesita ejecutar algo, devuelve tool calls (cliente o demo Studio). Router dinámico · sin shell VPS.
             </p>
           </div>
           <label className="gpt-agent-pick">

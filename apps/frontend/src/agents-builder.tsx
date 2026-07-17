@@ -252,9 +252,9 @@ export function AgentsBuilderPage() {
       <div className="panel-head">
         <div>
           <p className="eyebrow">AGENT BUILDER</p>
-          <h1>Agentes</h1>
+          <h1>Agentes listos para operar</h1>
           <p className="muted">
-            Crea agentes versionados con instrucciones, modelos, memoria, conocimiento y herramientas independientes.
+            Crea agentes versionados con prompts, modelos, memoria, conocimiento y herramientas independientes.
           </p>
           <p className="muted" style={{ marginTop: 6 }}>
             Create versioned agents with independent prompts, models, memory and tools.

@@ -304,10 +304,10 @@ type NavItem = { to: string; label: string; icon: typeof Gauge; when?: 'always' 
 
 const navItems: NavItem[] = [
   { to: '/', label: 'Chat', icon: MessagesSquare, when: 'always' },
-  { to: '/agents', label: 'Agentes', icon: Bot, when: 'always' },
-  { to: '/terminal', label: 'Terminal', icon: TerminalSquare, when: 'always' },
-  { to: '/docs', label: 'API docs', icon: BookOpen, when: 'always' },
-  { to: '/api-keys', label: 'API keys', icon: KeyRound, when: 'org_admin' },
+  { to: '/agents', label: 'Agent Builder', icon: Bot, when: 'always' },
+  { to: '/terminal', label: 'Morf Terminal', icon: TerminalSquare, when: 'always' },
+  { to: '/docs', label: 'API Docs', icon: BookOpen, when: 'always' },
+  { to: '/api-keys', label: 'API Keys', icon: KeyRound, when: 'org_admin' },
   { to: '/members', label: 'Equipo', icon: Users, when: 'org_admin' },
   { to: '/usage', label: 'Uso', icon: Activity, when: 'org_admin' },
   { to: '/knowledge', label: 'Knowledge', icon: Database, when: 'org_admin' },
@@ -331,14 +331,23 @@ function Layout({ children, fullBleed = false }: { children: React.ReactNode; fu
     if (item.when === 'org_admin') return isOrgAdmin(me)
     return true
   })
+  const orgName = me?.organization_name || 'CodeMorf'
+  const initials = (me?.email || 'AM').slice(0, 2).toUpperCase()
   return <div className={fullBleed ? 'app-shell chat-mode' : 'app-shell'}>
     <aside>
       <div className="brand">
-        <img src="/agents-morf-logo.png" alt="Agents Morf" />
+        <div className="brand-logo-fallback" title="Agents Morf">AM</div>
         <div>
           <strong>Agents Morf</strong>
-          <small>{me?.organization_name || 'CodeMorf AI'}</small>
+          <small>Autonomous AI OS</small>
         </div>
+      </div>
+      <div className="org-chip">
+        <div>
+          <small>Organización</small>
+          <b>{orgName}</b>
+        </div>
+        <span style={{ color: 'var(--muted)' }}>⌄</span>
       </div>
       <nav>
         {visible.map(({ to, label, icon: Icon }) => (
@@ -347,12 +356,22 @@ function Layout({ children, fullBleed = false }: { children: React.ReactNode; fu
           </NavLink>
         ))}
       </nav>
+      <div className="side-note">
+        <b>Router dinámico activo</b><br />
+        Groq para chat · Ollama solo tareas ligeras · Tool calls ejecutadas por el cliente.
+      </div>
       <div className="aside-foot">
         <button type="button" className="theme-toggle" onClick={toggleTheme}>
           {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-          {theme === 'dark' ? 'Modo claro' : 'Modo oscuro'}
+          {theme === 'dark' ? 'Cambiar a claro' : 'Cambiar a oscuro'}
         </button>
-        <p className="muted user-chip">{me?.email}</p>
+        <div className="profile-card">
+          <div className="avatar">{initials}</div>
+          <div>
+            <strong>{me?.email || 'usuario'}</strong>
+            <small>{me?.is_superuser ? 'Super Admin' : (me?.role || 'member')}</small>
+          </div>
+        </div>
         <button className="logout" onClick={() => { localStorage.clear(); navigate('/login') }}>
           <LogOut size={18} /> Salir
         </button>
@@ -360,12 +379,15 @@ function Layout({ children, fullBleed = false }: { children: React.ReactNode; fu
     </aside>
     <section className={fullBleed ? 'workspace workspace-bleed' : 'workspace'}>
       {!fullBleed && (
-        <header>
+        <header className="topbar-modern">
           <div>
-            <p className="eyebrow">AGENT.CODEMORF.TECH</p>
+            <p className="eyebrow">Workspace / {orgName}</p>
             <h2>{me?.is_superuser ? 'Platform control' : 'Espacio de trabajo'}</h2>
           </div>
-          <span className="status"><i /> API online</span>
+          <div className="top-pills">
+            <span className="status"><i /> API healthy</span>
+            <span className="pill-soft">execution_mode=client</span>
+          </div>
         </header>
       )}
       {children}

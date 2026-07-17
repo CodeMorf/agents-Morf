@@ -1,0 +1,1054 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agents Morf — Modern Product UI</title>
+  <meta name="description" content="Propuesta moderna para Agents Morf: Agent Builder, Chat y Agents Morf Terminal seguro." />
+  <style>
+    :root{
+      --bg:#07111f;
+      --bg-2:#0a1626;
+      --panel:rgba(12,24,42,.80);
+      --panel-strong:#0d1a2d;
+      --panel-soft:#102139;
+      --line:#1b314e;
+      --line-2:#27486e;
+      --text:#f4f7fb;
+      --muted:#91a4bf;
+      --muted-2:#677c99;
+      --cyan:#22d3ee;
+      --teal:#14b8a6;
+      --blue:#3b82f6;
+      --violet:#8b5cf6;
+      --green:#10b981;
+      --yellow:#f59e0b;
+      --red:#ef4444;
+      --shadow:0 24px 80px rgba(0,0,0,.34);
+      --shadow-soft:0 14px 40px rgba(0,0,0,.22);
+      --sidebar:244px;
+      --radius:22px;
+      --radius-sm:14px;
+    }
+
+    body.light{
+      --bg:#eef4fb;
+      --bg-2:#f7faff;
+      --panel:rgba(255,255,255,.82);
+      --panel-strong:#ffffff;
+      --panel-soft:#f1f6fb;
+      --line:#dce6f2;
+      --line-2:#c5d5e8;
+      --text:#0a1525;
+      --muted:#60718a;
+      --muted-2:#8ca0b7;
+      --shadow:0 24px 80px rgba(15,23,42,.10);
+      --shadow-soft:0 14px 40px rgba(15,23,42,.08);
+    }
+
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;
+      overflow:hidden;
+      color:var(--text);
+      font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      background:
+        radial-gradient(circle at 12% 4%,rgba(34,211,238,.14),transparent 26%),
+        radial-gradient(circle at 92% 0%,rgba(139,92,246,.16),transparent 28%),
+        linear-gradient(145deg,var(--bg),var(--bg-2));
+    }
+
+    button,input,select,textarea{font:inherit}
+    button{cursor:pointer}
+    ::selection{background:rgba(34,211,238,.28)}
+    ::-webkit-scrollbar{width:9px;height:9px}
+    ::-webkit-scrollbar-track{background:transparent}
+    ::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:999px}
+
+    .app{
+      height:100vh;
+      display:grid;
+      grid-template-columns:var(--sidebar) minmax(0,1fr);
+    }
+
+    .sidebar{
+      min-width:0;
+      border-right:1px solid var(--line);
+      background:rgba(7,17,31,.70);
+      backdrop-filter:blur(26px);
+      padding:18px 14px;
+      display:flex;
+      flex-direction:column;
+      position:relative;
+      z-index:30;
+    }
+    body.light .sidebar{background:rgba(255,255,255,.74)}
+
+    .brand{
+      display:flex;
+      align-items:center;
+      gap:12px;
+      padding:4px 6px 18px;
+    }
+    .brand-logo{
+      width:46px;height:46px;border-radius:16px;
+      display:grid;place-items:center;
+      color:#02131b;font-weight:950;letter-spacing:-.08em;
+      background:linear-gradient(135deg,var(--cyan),var(--teal));
+      box-shadow:0 14px 34px rgba(34,211,238,.22);
+    }
+    .brand-copy strong{display:block;font-size:15px;letter-spacing:-.02em}
+    .brand-copy span{display:block;color:var(--muted);font-size:11px;margin-top:2px}
+
+    .org{
+      border:1px solid var(--line);
+      background:var(--panel);
+      border-radius:16px;
+      padding:11px 12px;
+      display:flex;align-items:center;justify-content:space-between;
+      margin:0 2px 18px;
+    }
+    .org small{display:block;color:var(--muted);font-size:10px}
+    .org b{font-size:12px}
+
+    .nav{display:grid;gap:6px}
+    .nav button{
+      width:100%;
+      border:0;
+      color:var(--muted);
+      background:transparent;
+      padding:11px 12px;
+      border-radius:13px;
+      display:flex;align-items:center;gap:10px;
+      text-align:left;
+      transition:.18s ease;
+    }
+    .nav button:hover{color:var(--text);background:rgba(255,255,255,.04)}
+    body.light .nav button:hover{background:rgba(15,23,42,.04)}
+    .nav button.active{
+      color:white;
+      background:linear-gradient(135deg,rgba(20,184,166,.95),rgba(59,130,246,.95));
+      box-shadow:0 14px 30px rgba(59,130,246,.20);
+    }
+    .nav svg{width:18px;height:18px;flex:0 0 auto}
+
+    .side-note{
+      margin-top:18px;
+      padding:12px;
+      border:1px solid rgba(34,211,238,.16);
+      background:linear-gradient(145deg,rgba(34,211,238,.07),rgba(139,92,246,.05));
+      border-radius:16px;
+      color:var(--muted);
+      font-size:10px;
+      line-height:1.45;
+    }
+    .side-note b{color:var(--text)}
+
+    .side-grow{flex:1}
+    .profile{
+      border-top:1px solid var(--line);
+      padding-top:14px;
+      display:grid;gap:10px;
+    }
+    .profile-card{
+      display:flex;align-items:center;gap:10px;
+      padding:8px;
+    }
+    .avatar{
+      width:36px;height:36px;border-radius:12px;
+      display:grid;place-items:center;
+      background:linear-gradient(135deg,#a7f3d0,#67e8f9);
+      color:#083344;font-weight:900;font-size:11px;
+    }
+    .profile-card strong{display:block;font-size:11px}
+    .profile-card small{color:var(--muted);font-size:10px}
+
+    .main{
+      min-width:0;
+      height:100vh;
+      display:flex;
+      flex-direction:column;
+    }
+
+    .topbar{
+      height:74px;
+      padding:0 20px;
+      border-bottom:1px solid var(--line);
+      background:rgba(7,17,31,.52);
+      backdrop-filter:blur(24px);
+      display:flex;align-items:center;justify-content:space-between;gap:14px;
+      z-index:20;
+    }
+    body.light .topbar{background:rgba(255,255,255,.64)}
+
+    .crumbs small{display:block;color:var(--muted);font-size:10px}
+    .crumbs strong{display:block;font-size:15px;margin-top:2px}
+    .top-actions{display:flex;align-items:center;gap:8px}
+    .pill{
+      border:1px solid var(--line);
+      background:var(--panel);
+      border-radius:999px;
+      padding:8px 11px;
+      display:flex;align-items:center;gap:7px;
+      color:var(--muted);
+      font-size:10px;
+      white-space:nowrap;
+    }
+    .dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 0 4px rgba(16,185,129,.12)}
+    .icon-btn{
+      width:38px;height:38px;
+      border:1px solid var(--line);
+      background:var(--panel);
+      color:var(--text);
+      border-radius:13px;
+      display:grid;place-items:center;
+    }
+    .mobile-menu{display:none}
+
+    .content{
+      min-height:0;
+      flex:1;
+      padding:16px;
+      overflow:hidden;
+    }
+
+    .view{height:100%;display:none}
+    .view.active{display:block}
+
+    .panel{
+      background:var(--panel);
+      border:1px solid var(--line);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow-soft);
+      backdrop-filter:blur(22px);
+      min-height:0;
+    }
+
+    .grid-chat{
+      height:100%;
+      display:grid;
+      grid-template-columns:246px minmax(0,1fr) 302px;
+      gap:14px;
+    }
+
+    .context,.inspector{padding:16px;overflow:auto}
+    .section-label{
+      color:var(--cyan);
+      font-weight:900;
+      font-size:9px;
+      letter-spacing:.16em;
+      text-transform:uppercase;
+    }
+    .section-title{
+      margin:4px 0 14px;
+      font-size:15px;
+      letter-spacing:-.02em;
+    }
+
+    .field{display:grid;gap:7px;margin-bottom:12px}
+    .field label{color:var(--muted);font-size:10px;font-weight:700}
+    .field input,.field select,.field textarea{
+      width:100%;
+      border:1px solid var(--line);
+      background:var(--panel-strong);
+      color:var(--text);
+      border-radius:13px;
+      padding:10px 11px;
+      outline:none;
+      transition:.18s ease;
+    }
+    .field input:focus,.field select:focus,.field textarea:focus{
+      border-color:var(--cyan);
+      box-shadow:0 0 0 4px rgba(34,211,238,.10);
+    }
+
+    .chips{display:flex;gap:6px;flex-wrap:wrap}
+    .chip{
+      border:1px solid var(--line);
+      background:var(--panel-soft);
+      color:var(--muted);
+      border-radius:999px;
+      padding:6px 8px;
+      font-size:9px;
+    }
+    .chip.green{color:#6ee7b7;border-color:rgba(16,185,129,.28);background:rgba(16,185,129,.10)}
+    .chip.cyan{color:#67e8f9;border-color:rgba(34,211,238,.28);background:rgba(34,211,238,.08)}
+    .chip.yellow{color:#fcd34d;border-color:rgba(245,158,11,.28);background:rgba(245,158,11,.09)}
+
+    .chat-main{
+      display:flex;
+      flex-direction:column;
+      overflow:hidden;
+      position:relative;
+    }
+    .hero{
+      padding:19px 20px 14px;
+      border-bottom:1px solid var(--line);
+      background:
+        linear-gradient(180deg,rgba(255,255,255,.02),transparent),
+        linear-gradient(135deg,rgba(34,211,238,.05),rgba(139,92,246,.05));
+    }
+    .hero-row{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}
+    .hero h1{margin:4px 0 7px;font-size:24px;letter-spacing:-.05em}
+    .hero p{margin:0;color:var(--muted);font-size:12px;line-height:1.55;max-width:700px}
+    .hero-actions{display:flex;gap:8px}
+    .btn{
+      border:0;border-radius:13px;padding:10px 13px;font-weight:800;
+      display:inline-flex;align-items:center;justify-content:center;gap:8px;
+    }
+    .btn-primary{color:#03131b;background:linear-gradient(135deg,var(--cyan),var(--teal));box-shadow:0 14px 30px rgba(34,211,238,.16)}
+    .btn-secondary{color:var(--text);background:var(--panel-strong);border:1px solid var(--line)}
+    .btn-danger{color:#fecaca;background:rgba(239,68,68,.11);border:1px solid rgba(239,68,68,.24)}
+    .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:15px}
+    .stat{border:1px solid var(--line);background:rgba(255,255,255,.02);border-radius:14px;padding:10px 11px}
+    .stat small{display:block;color:var(--muted);font-size:9px}
+    .stat strong{display:block;margin-top:4px;font-size:11px}
+
+    .messages{flex:1;min-height:0;overflow:auto;padding:20px 20px 120px}
+    .empty{height:100%;min-height:330px;display:grid;place-items:center;text-align:center;color:var(--muted)}
+    .empty-inner{max-width:480px}
+    .empty-icon{
+      width:66px;height:66px;border-radius:22px;margin:0 auto 16px;
+      display:grid;place-items:center;color:#03131b;font-size:28px;font-weight:900;
+      background:linear-gradient(135deg,var(--cyan),var(--violet));
+      box-shadow:0 20px 40px rgba(34,211,238,.16);
+    }
+    .empty h2{margin:0 0 8px;color:var(--text);font-size:24px;letter-spacing:-.04em}
+    .empty p{font-size:12px;line-height:1.6}
+    .suggestions{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-top:18px}
+    .suggestions button{
+      border:1px solid var(--line);background:var(--panel-strong);color:var(--text);
+      border-radius:999px;padding:9px 11px;font-size:10px;
+    }
+
+    .message{
+      display:grid;
+      grid-template-columns:34px minmax(0,1fr);
+      gap:10px;
+      max-width:860px;
+      margin-bottom:14px;
+    }
+    .message.user{margin-left:auto;grid-template-columns:minmax(0,1fr) 34px}
+    .message.user .bubble{order:1;background:linear-gradient(135deg,rgba(20,184,166,.95),rgba(59,130,246,.95));border-color:transparent;color:white}
+    .message.user .msg-avatar{order:2}
+    .msg-avatar{
+      width:34px;height:34px;border-radius:12px;
+      display:grid;place-items:center;
+      border:1px solid var(--line);background:var(--panel-soft);
+      color:var(--muted);font-size:10px;font-weight:900;
+    }
+    .bubble{
+      border:1px solid var(--line);
+      background:var(--panel-strong);
+      border-radius:16px;
+      padding:13px 14px;
+      font-size:12px;
+      line-height:1.58;
+      box-shadow:0 5px 16px rgba(0,0,0,.06);
+    }
+    .meta{display:flex;gap:8px;flex-wrap:wrap;color:var(--muted);font-size:9px;margin-top:8px}
+    .tool-card{margin-top:10px;border:1px solid rgba(245,158,11,.30);background:rgba(245,158,11,.07);border-radius:14px;overflow:hidden}
+    .tool-head{display:flex;align-items:center;justify-content:space-between;padding:10px 11px;border-bottom:1px solid rgba(245,158,11,.20)}
+    .tool-body{padding:10px 11px}
+    pre{margin:0;white-space:pre-wrap;word-break:break-word;font-family:"SFMono-Regular",Consolas,monospace;font-size:10px}
+
+    .composer{
+      position:absolute;left:0;right:0;bottom:0;
+      padding:12px 14px 14px;
+      background:linear-gradient(180deg,transparent,var(--panel-strong) 34%);
+    }
+    .composer-box{
+      display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:end;
+      border:1px solid var(--line-2);background:var(--panel-strong);border-radius:17px;padding:8px;
+      box-shadow:var(--shadow);
+    }
+    .composer textarea{
+      min-height:42px;max-height:130px;resize:none;border:0;outline:0;background:transparent;color:var(--text);padding:10px 4px;
+    }
+
+    .metric-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:14px}
+    .metric{border:1px solid var(--line);background:var(--panel-soft);border-radius:14px;padding:10px}
+    .metric small{display:block;color:var(--muted);font-size:8px;letter-spacing:.08em;text-transform:uppercase}
+    .metric strong{display:block;margin-top:4px;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .tabs{display:flex;gap:4px;background:var(--panel-soft);padding:4px;border-radius:12px;margin-bottom:12px}
+    .tabs button{flex:1;border:0;background:transparent;color:var(--muted);padding:8px;border-radius:9px;font-size:10px;font-weight:800}
+    .tabs button.active{background:var(--panel-strong);color:var(--text)}
+    .codebox{border:1px solid var(--line);background:#020817;color:#cfe8ff;border-radius:14px;padding:12px;min-height:130px;overflow:auto}
+
+    /* AGENT BUILDER */
+    .builder{
+      height:100%;
+      overflow:auto;
+      padding:20px;
+    }
+    .builder-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px}
+    .builder-head h1{margin:4px 0 7px;font-size:28px;letter-spacing:-.05em}
+    .builder-head p{margin:0;color:var(--muted);font-size:12px}
+    .builder-actions{display:flex;gap:8px;flex-wrap:wrap}
+    .template-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+    .template-card{
+      border:1px solid var(--line);
+      background:linear-gradient(160deg,rgba(255,255,255,.03),rgba(255,255,255,.01));
+      border-radius:20px;
+      padding:16px;
+      box-shadow:var(--shadow-soft);
+      transition:.2s ease;
+    }
+    .template-card:hover{transform:translateY(-3px);border-color:var(--line-2)}
+    .template-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+    .template-icon{
+      width:42px;height:42px;border-radius:14px;
+      display:grid;place-items:center;
+      background:linear-gradient(135deg,rgba(34,211,238,.16),rgba(139,92,246,.16));
+      border:1px solid rgba(34,211,238,.18);
+      font-size:19px;
+    }
+    .template-card h3{margin:12px 0 6px;font-size:15px}
+    .template-card p{margin:0;color:var(--muted);font-size:10px;line-height:1.55;min-height:48px}
+    .template-footer{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:14px}
+    .template-footer .btn{padding:8px 10px;font-size:10px}
+
+    /* TERMINAL */
+    .terminal-grid{
+      height:100%;
+      display:grid;
+      grid-template-columns:244px minmax(0,1fr) 320px;
+      gap:14px;
+    }
+    .terminal-left,.terminal-right{padding:16px;overflow:auto}
+    .terminal-main{
+      display:flex;
+      flex-direction:column;
+      overflow:hidden;
+      background:
+        radial-gradient(circle at 10% 0%,rgba(34,211,238,.06),transparent 24%),
+        #030914;
+      border-color:#153152;
+    }
+    .terminal-header{
+      padding:15px 17px;
+      border-bottom:1px solid #153152;
+      display:flex;align-items:center;justify-content:space-between;gap:14px;
+      background:rgba(3,9,20,.84);
+    }
+    .terminal-title{display:flex;align-items:center;gap:10px}
+    .terminal-dot{width:10px;height:10px;border-radius:50%}
+    .terminal-dot.red{background:#ff5f57}.terminal-dot.yellow{background:#febc2e}.terminal-dot.green{background:#28c840}
+    .terminal-badge{color:#76e4ff;font-size:10px;letter-spacing:.12em;font-weight:900}
+    .terminal-stream{
+      flex:1;
+      min-height:0;
+      overflow:auto;
+      padding:18px;
+      font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;
+      color:#d4e9ff;
+      font-size:12px;
+      line-height:1.65;
+    }
+    .term-line{margin-bottom:10px}
+    .term-prompt{color:#5eead4}
+    .term-system{color:#93c5fd}
+    .term-success{color:#86efac}
+    .term-warn{color:#fcd34d}
+    .term-muted{color:#7187a6}
+    .term-json{color:#c4b5fd}
+    .terminal-input-wrap{
+      border-top:1px solid #153152;
+      padding:12px 14px;
+      display:grid;
+      grid-template-columns:auto minmax(0,1fr) auto;
+      gap:8px;align-items:center;
+      background:#020713;
+    }
+    .terminal-input-wrap span{color:#5eead4;font-family:monospace;font-weight:900}
+    .terminal-input-wrap input{
+      border:0;outline:0;background:transparent;color:#e6f1ff;
+      font-family:"SFMono-Regular",Consolas,monospace;
+      padding:9px 2px;
+    }
+    .terminal-input-wrap button{
+      border:1px solid #1d4d73;background:#0b233a;color:#7dd3fc;
+      border-radius:11px;padding:9px 12px;font-weight:800;
+    }
+    .command-list{display:grid;gap:7px;margin-top:10px}
+    .command{
+      border:1px solid var(--line);
+      background:var(--panel-soft);
+      border-radius:12px;
+      padding:9px 10px;
+      color:var(--muted);
+      font-size:10px;
+      display:flex;justify-content:space-between;gap:8px;
+    }
+    .command code{color:var(--cyan)}
+
+    .mobile-menu{display:none}
+
+    @media(max-width:1180px){
+      .grid-chat,.terminal-grid{grid-template-columns:230px minmax(0,1fr)}
+      .inspector,.terminal-right{
+        position:fixed;
+        right:16px;top:90px;bottom:16px;
+        width:320px;
+        z-index:50;
+        display:none;
+        box-shadow:var(--shadow);
+      }
+      .inspector.open,.terminal-right.open{display:block}
+      .template-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+    }
+
+    @media(max-width:860px){
+      :root{--sidebar:0px}
+      .app{grid-template-columns:1fr}
+      .sidebar{
+        position:fixed;inset:0 auto 0 0;width:246px;
+        transform:translateX(-105%);
+        transition:.22s ease;
+        box-shadow:var(--shadow);
+      }
+      .sidebar.open{transform:translateX(0)}
+      .mobile-menu{display:grid}
+      .content{padding:10px}
+      .grid-chat,.terminal-grid{grid-template-columns:1fr}
+      .context,.terminal-left{display:none}
+      .topbar{padding:0 12px}
+      .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .hero-row,.builder-head{flex-direction:column}
+      .template-grid{grid-template-columns:1fr}
+    }
+
+    @media(max-width:560px){
+      .pill.hide-mobile{display:none}
+      .hero h1{font-size:20px}
+      .hero{padding:15px 14px 12px}
+      .hero-actions{width:100%}
+      .hero-actions .btn{flex:1}
+      .messages{padding:15px 13px 120px}
+      .composer-box{grid-template-columns:minmax(0,1fr) auto}
+      .composer-box .attach{display:none}
+      .builder{padding:14px}
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-logo">AM</div>
+      <div class="brand-copy">
+        <strong>Agents Morf</strong>
+        <span>Autonomous AI OS</span>
+      </div>
+    </div>
+
+    <div class="org">
+      <div><small>Organización</small><b>CodeMorf</b></div>
+      <span>⌄</span>
+    </div>
+
+    <nav class="nav">
+      <button class="active" data-view="chat">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>
+        Chat
+      </button>
+      <button data-view="builder">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M9 7V5a3 3 0 0 1 6 0v2M8 13h.01M16 13h.01M9 17h6"/></svg>
+        Agent Builder
+      </button>
+      <button data-view="terminal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>
+        Morf Terminal
+      </button>
+      <button>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M4 4v15.5A2.5 2.5 0 0 0 6.5 22H20V2H6.5A2.5 2.5 0 0 0 4 4Z"/></svg>
+        API Docs
+      </button>
+      <button>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="7" cy="17" r="3"/><path d="m10 17 8-8M14 5h5v5"/></svg>
+        API Keys
+      </button>
+      <button>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><path d="m7 15 4-4 4 3 5-6"/></svg>
+        Uso
+      </button>
+      <button>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>
+        Knowledge
+      </button>
+      <button>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14.7 6.3a4 4 0 0 0-5.7 5.7l-6 6 3 3 6-6a4 4 0 0 0 5.7-5.7l-3 3-3-3 3-3Z"/></svg>
+        Tools
+      </button>
+      <button>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1V21h-4v-.09a1.7 1.7 0 0 0-1.4-1.67 1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1-.4H3v-4h.09A1.7 1.7 0 0 0 4.76 8.2a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1V3h4v.09A1.7 1.7 0 0 0 15.8 4.76a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.17.37.37.7.6 1 .28.28.63.47 1 .54H21v4h-.09a1.7 1.7 0 0 0-1.51.46Z"/></svg>
+        Settings
+      </button>
+    </nav>
+
+    <div class="side-note">
+      <b>Router dinámico activo</b><br>
+      Groq para chat · Ollama solo tareas ligeras · Tool calls ejecutadas por el cliente.
+    </div>
+
+    <div class="side-grow"></div>
+
+    <div class="profile">
+      <button class="btn btn-secondary" id="themeBtn">◐ Cambiar tema</button>
+      <div class="profile-card">
+        <div class="avatar">CM</div>
+        <div><strong>admin@codemorf.tech</strong><small>Super Admin</small></div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div style="display:flex;align-items:center;gap:12px;min-width:0">
+        <button class="icon-btn mobile-menu" id="menuBtn">☰</button>
+        <div class="crumbs"><small>Workspace / CodeMorf</small><strong id="pageTitle">Chat inteligente</strong></div>
+      </div>
+      <div class="top-actions">
+        <div class="pill"><span class="dot"></span><span>API healthy</span></div>
+        <div class="pill hide-mobile">Groq · <b>222 ms</b></div>
+        <button class="icon-btn" id="inspectorBtn">⌘</button>
+      </div>
+    </header>
+
+    <div class="content">
+
+      <!-- CHAT -->
+      <section class="view active" id="view-chat">
+        <div class="grid-chat">
+          <aside class="panel context">
+            <div class="section-label">Contexto</div>
+            <h3 class="section-title">Sesión activa</h3>
+
+            <div class="field">
+              <label>Agente</label>
+              <select id="agentSelect">
+                <option>Programación AI · v2.0.0</option>
+                <option>Venta AI · v1.0.0</option>
+                <option>RestaApp AI · v1.0.0</option>
+                <option>Análisis de datos AI · v1.0.0</option>
+              </select>
+            </div>
+            <div class="field"><label>Modo de modelo</label><select><option>Automático (router)</option><option>Rápido</option><option>Económico</option><option>Privado</option><option>Máxima calidad</option></select></div>
+            <div class="field"><label>end_user_id</label><input value="terminal-user"></div>
+            <div class="field"><label>external_conversation_id</label><input placeholder="opcional"></div>
+
+            <div class="chips">
+              <span class="chip green">execution_mode=client</span>
+              <span class="chip cyan">router dinámico</span>
+              <span class="chip">sin shell VPS</span>
+            </div>
+
+            <div style="height:18px"></div>
+            <div class="section-label">Memoria</div>
+            <h3 class="section-title">Contexto recuperado</h3>
+            <div class="command-list">
+              <div class="command"><span>Preferencia</span><code>Español</code></div>
+              <div class="command"><span>Restricción</span><code>Sin SSH</code></div>
+              <div class="command"><span>Rol</span><code>Developer</code></div>
+            </div>
+          </aside>
+
+          <section class="panel chat-main">
+            <div class="hero">
+              <div class="hero-row">
+                <div>
+                  <div class="section-label">CHAT INTELIGENTE</div>
+                  <h1 id="chatAgentTitle">Programación AI</h1>
+                  <p>Conversa con el agente. Si necesita ejecutar algo, devolverá una tool call para que el backend o dispositivo autorizado del cliente la procese.</p>
+                </div>
+                <div class="hero-actions">
+                  <button class="btn btn-secondary">Exportar</button>
+                  <button class="btn btn-primary">Nueva sesión</button>
+                </div>
+              </div>
+              <div class="stats">
+                <div class="stat"><small>Proveedor</small><strong>Groq</strong></div>
+                <div class="stat"><small>Modelo</small><strong>llama-3.1-8b-instant</strong></div>
+                <div class="stat"><small>Memoria</small><strong>3 recuerdos</strong></div>
+                <div class="stat"><small>RAG</small><strong>2 chunks</strong></div>
+              </div>
+            </div>
+
+            <div class="messages" id="messages">
+              <div class="empty" id="emptyState">
+                <div class="empty-inner">
+                  <div class="empty-icon">✦</div>
+                  <h2>¿En qué puedo ayudarte?</h2>
+                  <p>Prueba memoria, RAG, entrenamiento y acciones estructuradas. El agente nunca confirma una ejecución hasta recibir un tool_result real.</p>
+                  <div class="suggestions">
+                    <button>Analiza este repositorio</button>
+                    <button>Prepara una cotización</button>
+                    <button>Resume nuestra base de conocimiento</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="composer">
+              <div class="composer-box">
+                <button class="icon-btn attach">＋</button>
+                <textarea id="chatInput" placeholder="Escribe un mensaje al agente..."></textarea>
+                <button class="btn btn-primary" id="chatSend">Enviar ↗</button>
+              </div>
+            </div>
+          </section>
+
+          <aside class="panel inspector" id="chatInspector">
+            <div class="section-label">Inspector</div>
+            <h3 class="section-title">Ejecución</h3>
+            <div class="metric-grid">
+              <div class="metric"><small>Provider</small><strong>Groq</strong></div>
+              <div class="metric"><small>Latency</small><strong id="chatLatency">222 ms</strong></div>
+              <div class="metric"><small>Memory hits</small><strong>3</strong></div>
+              <div class="metric"><small>Knowledge hits</small><strong>2</strong></div>
+              <div class="metric"><small>Tool rounds</small><strong id="chatRounds">0</strong></div>
+              <div class="metric"><small>Fallback</small><strong>false</strong></div>
+            </div>
+
+            <div class="tabs"><button class="active">Request</button><button>Response</button><button>Tool</button></div>
+            <div class="codebox"><pre id="chatJson">{
+  "agent": "programming-ai",
+  "mode": "automatic",
+  "execution_mode": "client",
+  "messages": []
+}</pre></div>
+
+            <div style="height:14px"></div>
+            <div class="section-label">Tool simulator</div>
+            <h3 class="section-title">Resultado del cliente</h3>
+            <div class="field"><textarea rows="6" id="simResult">{
+  "ok": true,
+  "result": "Tests passed"
+}</textarea></div>
+            <div style="display:flex;gap:7px;flex-wrap:wrap">
+              <button class="btn btn-primary" id="simSuccess">Success</button>
+              <button class="btn btn-secondary">Failed</button>
+              <button class="btn btn-danger">Reject</button>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- BUILDER -->
+      <section class="view" id="view-builder">
+        <div class="panel builder">
+          <div class="builder-head">
+            <div>
+              <div class="section-label">AGENT BUILDER</div>
+              <h1>Agentes listos para operar</h1>
+              <p>Crea agentes versionados con prompts, modelos, memoria, conocimiento y herramientas independientes.</p>
+            </div>
+            <div class="builder-actions">
+              <button class="btn btn-secondary">Importar manifiesto</button>
+              <button class="btn btn-secondary">Clonar agente</button>
+              <button class="btn btn-primary">＋ Nuevo agente</button>
+            </div>
+          </div>
+
+          <div class="template-grid" id="templateGrid"></div>
+        </div>
+      </section>
+
+      <!-- TERMINAL -->
+      <section class="view" id="view-terminal">
+        <div class="terminal-grid">
+          <aside class="panel terminal-left">
+            <div class="section-label">TERMINAL CONTEXT</div>
+            <h3 class="section-title">Morf Terminal</h3>
+            <div class="field">
+              <label>Agente</label>
+              <select id="terminalAgent">
+                <option>Programación AI · v2.0.0</option>
+                <option>Venta AI · v1.0.0</option>
+                <option>RestaApp AI · v1.0.0</option>
+                <option>Análisis de datos AI · v1.0.0</option>
+              </select>
+            </div>
+            <div class="field"><label>API key de prueba</label><select><option>Sesión JWT actual</option><option>am_test_•••••••</option></select></div>
+            <div class="field"><label>Modo</label><select><option>Automático (router)</option><option>Rápido</option><option>Privado</option></select></div>
+            <div class="field"><label>Workspace simulado</label><input value="cliente/proyecto-demo"></div>
+            <div class="chips">
+              <span class="chip green">safe playground</span>
+              <span class="chip cyan">client tools</span>
+              <span class="chip yellow">no shell VPS</span>
+            </div>
+
+            <div style="height:18px"></div>
+            <div class="section-label">Comandos</div>
+            <div class="command-list">
+              <div class="command"><code>/help</code><span>Ayuda</span></div>
+              <div class="command"><code>/agent</code><span>Agente activo</span></div>
+              <div class="command"><code>/tool</code><span>Simular tool call</span></div>
+              <div class="command"><code>/run-tests</code><span>Simular tests</span></div>
+              <div class="command"><code>/manifest</code><span>Ver manifiesto</span></div>
+              <div class="command"><code>/clear</code><span>Limpiar</span></div>
+            </div>
+          </aside>
+
+          <section class="panel terminal-main">
+            <div class="terminal-header">
+              <div>
+                <div style="display:flex;gap:6px;margin-bottom:8px">
+                  <span class="terminal-dot red"></span>
+                  <span class="terminal-dot yellow"></span>
+                  <span class="terminal-dot green"></span>
+                </div>
+                <div class="terminal-title">
+                  <strong>Agents Morf Terminal</strong>
+                  <span class="terminal-badge">SECURE CLIENT PLAYGROUND</span>
+                </div>
+              </div>
+              <div class="chips">
+                <span class="chip green">connected</span>
+                <span class="chip cyan">Groq</span>
+              </div>
+            </div>
+
+            <div class="terminal-stream" id="terminalStream">
+              <div class="term-line term-system">Agents Morf Terminal v0.2</div>
+              <div class="term-line term-muted">Playground seguro para probar agentes, tool calls y tool_results.</div>
+              <div class="term-line term-warn">No es una terminal Linux. No ejecuta comandos del VPS.</div>
+              <div class="term-line"></div>
+              <div class="term-line"><span class="term-prompt">morf@codemorf:~$</span> /help</div>
+              <div class="term-line term-system">Comandos disponibles: /agent, /tool, /run-tests, /manifest, /clear</div>
+              <div class="term-line term-success">Router: automatic · Provider: Groq · Fallback local: false</div>
+            </div>
+
+            <div class="terminal-input-wrap">
+              <span>›</span>
+              <input id="terminalInput" placeholder="Escribe una instrucción o /help">
+              <button id="terminalSend">Ejecutar</button>
+            </div>
+          </section>
+
+          <aside class="panel terminal-right" id="terminalInspector">
+            <div class="section-label">TERMINAL INSPECTOR</div>
+            <h3 class="section-title">Flujo de ejecución</h3>
+
+            <div class="metric-grid">
+              <div class="metric"><small>Provider</small><strong>Groq</strong></div>
+              <div class="metric"><small>Model</small><strong>llama-3.1-8b</strong></div>
+              <div class="metric"><small>Latency</small><strong id="termLatency">411 ms</strong></div>
+              <div class="metric"><small>Tool rounds</small><strong id="termRounds">0</strong></div>
+            </div>
+
+            <div class="section-label">REQUEST JSON</div>
+            <div class="codebox" style="margin-top:8px"><pre id="terminalJson">{
+  "agent": "programming-ai",
+  "execution_mode": "client",
+  "input": null
+}</pre></div>
+
+            <div style="height:14px"></div>
+            <div class="section-label">CLIENT TOOL RESULT</div>
+            <div class="field" style="margin-top:8px"><textarea rows="7">{
+  "status": "success",
+  "result": {
+    "tests": "passed"
+  }
+}</textarea></div>
+            <div style="display:flex;gap:7px;flex-wrap:wrap">
+              <button class="btn btn-primary" id="termToolSuccess">Enviar result</button>
+              <button class="btn btn-secondary">Reject</button>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<script>
+  const body=document.body;
+  const sidebar=document.getElementById('sidebar');
+  const pageTitle=document.getElementById('pageTitle');
+  const chatInspector=document.getElementById('chatInspector');
+  const terminalInspector=document.getElementById('terminalInspector');
+
+  document.getElementById('themeBtn').onclick=()=>body.classList.toggle('light');
+  document.getElementById('menuBtn').onclick=()=>sidebar.classList.toggle('open');
+
+  document.getElementById('inspectorBtn').onclick=()=>{
+    if(document.getElementById('view-terminal').classList.contains('active')) terminalInspector.classList.toggle('open');
+    else chatInspector.classList.toggle('open');
+  };
+
+  const titles={chat:'Chat inteligente',builder:'Agent Builder',terminal:'Agents Morf Terminal'};
+  document.querySelectorAll('.nav button[data-view]').forEach(btn=>{
+    btn.onclick=()=>{
+      document.querySelectorAll('.nav button').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+      document.getElementById('view-'+btn.dataset.view).classList.add('active');
+      pageTitle.textContent=titles[btn.dataset.view];
+      sidebar.classList.remove('open');
+    };
+  });
+
+  const templates=[
+    ['💼','Venta AI','Califica leads, recomienda productos y devuelve tool calls para cotización, seguimiento y órdenes.'],
+    ['🍽️','RestaApp AI','Consulta menú, disponibilidad, reservas y pedidos mediante herramientas del backend del restaurante.'],
+    ['💬','Chatbot soporte','Atiende consultas, usa RAG, crea tickets y escala a un humano cuando corresponde.'],
+    ['🏢','Sucursales AI','Ubica sucursales, horarios, servicios y dirige al cliente al equipo correcto.'],
+    ['⚡','Chatbot básico','FAQ, información general, contacto y escalamiento con configuración mínima.'],
+    ['⌨️','Programación AI','Analiza código, genera patches, propone tests y usa runners externos autorizados.'],
+    ['📊','Análisis de datos AI','Ejecuta consultas read-only, agrega resultados y genera especificaciones de gráficas.'],
+    ['💰','Finanzas AI','Resume presupuestos, clasifica gastos y prepara reportes con aprobación humana.'],
+    ['📅','Auto Calendario AI','Busca disponibilidad, propone horarios y devuelve tool calls idempotentes para citas.'],
+    ['🧩','Departamento AI','Agente interno adaptable a ventas, soporte, RRHH, operaciones o tecnología.']
+  ];
+
+  const grid=document.getElementById('templateGrid');
+  templates.forEach((t,i)=>{
+    const card=document.createElement('article');
+    card.className='template-card';
+    card.innerHTML=`
+      <div class="template-top">
+        <div class="template-icon">${t[0]}</div>
+        <span class="chip cyan">v1.0.0</span>
+      </div>
+      <h3>${t[1]}</h3>
+      <p>${t[2]}</p>
+      <div class="chips" style="margin-top:12px">
+        <span class="chip">memory</span>
+        <span class="chip">RAG</span>
+        <span class="chip">client tools</span>
+      </div>
+      <div class="template-footer">
+        <span class="chip green">preconfigurado</span>
+        <button class="btn btn-primary">Usar plantilla</button>
+      </div>`;
+    grid.appendChild(card);
+  });
+
+  const messages=document.getElementById('messages');
+  const emptyState=document.getElementById('emptyState');
+  const chatInput=document.getElementById('chatInput');
+  const chatJson=document.getElementById('chatJson');
+
+  function esc(v){return v.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
+  function addMessage(role,text,tool=false){
+    emptyState.style.display='none';
+    const el=document.createElement('div');
+    el.className='message '+(role==='user'?'user':'');
+    if(role==='user'){
+      el.innerHTML=`<div class="bubble">${esc(text)}<div class="meta"><span>ahora</span><span>cliente</span></div></div><div class="msg-avatar">TÚ</div>`;
+    }else{
+      el.innerHTML=`<div class="msg-avatar">AM</div><div class="bubble">${esc(text)}
+      ${tool?`<div class="tool-card"><div class="tool-head"><strong>tool_call · code.run_tests</strong><span class="chip yellow">pending</span></div><div class="tool-body"><pre>{
+  "workspace": "cliente/proyecto-demo",
+  "scope": "tests",
+  "execution_mode": "client"
+}</pre></div></div>`:''}
+      <div class="meta"><span>Groq</span><span>llama-3.1-8b-instant</span><span>${Math.floor(190+Math.random()*180)} ms</span></div></div>`;
+    }
+    messages.appendChild(el);
+    messages.scrollTop=messages.scrollHeight;
+  }
+
+  function sendChat(){
+    const v=chatInput.value.trim();
+    if(!v)return;
+    addMessage('user',v);
+    chatInput.value='';
+    chatJson.textContent=JSON.stringify({
+      agent:document.getElementById('agentSelect').value.split(' · ')[0].toLowerCase().replaceAll(' ','-'),
+      execution_mode:'client',
+      mode:'automatic',
+      messages:[{role:'user',content:v}]
+    },null,2);
+    setTimeout(()=>{
+      const tool=/test|ejecut|archivo|cotiz|reserva|calendario|orden/i.test(v);
+      addMessage('assistant',tool
+        ?'Preparé la acción. Para ejecutarla con seguridad, el backend del cliente debe procesar la tool call y devolver el resultado.'
+        :'Entendido. Puedo continuar usando memoria, conocimiento y el modelo dinámico autorizado.',tool);
+      document.getElementById('chatRounds').textContent=tool?'1':'0';
+      document.getElementById('chatLatency').textContent=`${Math.floor(190+Math.random()*180)} ms`;
+    },650);
+  }
+  document.getElementById('chatSend').onclick=sendChat;
+  chatInput.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChat()}};
+  document.querySelectorAll('.suggestions button').forEach(b=>b.onclick=()=>{chatInput.value=b.textContent;sendChat()});
+  document.getElementById('simSuccess').onclick=()=>{addMessage('assistant','Tool result recibido. La operación simulada fue procesada y puedo continuar con el siguiente paso.');document.getElementById('chatRounds').textContent='2'};
+
+  document.getElementById('agentSelect').onchange=e=>{
+    document.getElementById('chatAgentTitle').textContent=e.target.value.split(' · ')[0];
+  };
+
+  const terminalStream=document.getElementById('terminalStream');
+  const terminalInput=document.getElementById('terminalInput');
+  const terminalJson=document.getElementById('terminalJson');
+
+  function termLine(html,cls=''){
+    const div=document.createElement('div');
+    div.className='term-line '+cls;
+    div.innerHTML=html;
+    terminalStream.appendChild(div);
+    terminalStream.scrollTop=terminalStream.scrollHeight;
+  }
+
+  function runTerminal(){
+    const v=terminalInput.value.trim();
+    if(!v)return;
+    termLine(`<span class="term-prompt">morf@codemorf:~$</span> ${esc(v)}`);
+    terminalInput.value='';
+    terminalJson.textContent=JSON.stringify({
+      agent:document.getElementById('terminalAgent').value.split(' · ')[0].toLowerCase().replaceAll(' ','-'),
+      execution_mode:'client',
+      input:v,
+      safe_playground:true
+    },null,2);
+
+    if(v==='/clear'){terminalStream.innerHTML='';return}
+    if(v==='/help'){
+      termLine('Comandos: /agent, /tool, /run-tests, /manifest, /clear','term-system');
+      return;
+    }
+    if(v==='/agent'){
+      termLine(`Agente activo: ${esc(document.getElementById('terminalAgent').value)}`,'term-success');
+      return;
+    }
+    if(v==='/manifest'){
+      termLine('integration-manifest.json preparado para descarga.','term-success');
+      return;
+    }
+    if(v==='/tool'){
+      termLine('tool_call preparada: code.read_file','term-warn');
+      termLine(`{
+  "path": "src/app.py",
+  "execution_mode": "client"
+}`,'term-json');
+      document.getElementById('termRounds').textContent='1';
+      return;
+    }
+    if(v==='/run-tests'){
+      termLine('tool_call preparada: code.run_tests','term-warn');
+      termLine('Esperando tool_result del runner autorizado...','term-muted');
+      document.getElementById('termRounds').textContent='1';
+      return;
+    }
+
+    termLine('Analizando solicitud con router dinámico...','term-muted');
+    setTimeout(()=>{
+      termLine('Respuesta generada. Si requiere ejecución, se emitirá una tool call del cliente.','term-success');
+      document.getElementById('termLatency').textContent=`${Math.floor(220+Math.random()*260)} ms`;
+    },450);
+  }
+
+  document.getElementById('terminalSend').onclick=runTerminal;
+  terminalInput.onkeydown=e=>{if(e.key==='Enter'){runTerminal()}};
+  document.getElementById('termToolSuccess').onclick=()=>{
+    termLine('tool_result recibido: success','term-success');
+    termLine('Continuando conversación con el resultado real del cliente...','term-system');
+    document.getElementById('termRounds').textContent='2';
+  };
+</script>
+</body>
+</html>
