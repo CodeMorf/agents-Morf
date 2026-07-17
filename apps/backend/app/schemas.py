@@ -141,6 +141,17 @@ class OrganizationOut(ORMModel):
     settings: dict[str, Any]
 
 
+class OrganizationQuotasUpdate(BaseModel):
+    """Partial override of plan quotas for the current organization."""
+
+    enabled: bool | None = None
+    requests_per_day: int | None = Field(default=None, ge=1, le=10_000_000)
+    tokens_per_day: int | None = Field(default=None, ge=1000, le=1_000_000_000)
+    max_agents: int | None = Field(default=None, ge=1, le=10_000)
+    max_api_keys: int | None = Field(default=None, ge=1, le=10_000)
+    plan: str | None = Field(default=None, max_length=30)
+
+
 class ProviderCreate(BaseModel):
     name: str = Field(min_length=2, max_length=100)
     kind: Literal["openai_compatible", "gemini", "anthropic", "ollama", "grok_build"]

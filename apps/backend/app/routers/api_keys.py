@@ -10,6 +10,7 @@ from app.core.security import generate_api_key, hash_api_key
 from app.dependencies import TenantContext, get_tenant, require_roles
 from app.models import ApiKey, Role
 from app.schemas import API_KEY_SCOPES, ApiKeyCreate, ApiKeyCreated, ApiKeyOut
+from app.services.quotas import enforce_api_key_quota
 
 router = APIRouter(prefix="/api-keys", tags=["API Keys"])
 
@@ -60,6 +61,7 @@ async def create_api_key(
         raise HTTPException(status_code=400, detail=f"Invalid scopes: {', '.join(invalid)}")
     if not data.scopes:
         raise HTTPException(status_code=400, detail="At least one scope is required")
+    await enforce_api_key_quota(db, ctx.organization)
     raw, prefix = generate_api_key()
     item = ApiKey(
         organization_id=ctx.organization.id,

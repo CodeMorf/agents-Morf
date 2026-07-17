@@ -3,9 +3,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.dependencies import get_current_user
-from app.models import Membership, Organization, User
-from app.schemas import OrganizationCreate, OrganizationOut
+from app.dependencies import TenantContext, get_current_user, get_tenant, require_roles
+from app.models import Membership, Organization, Role, User
+from app.schemas import OrganizationCreate, OrganizationOut, OrganizationQuotasUpdate
+from app.services.quotas import PLAN_DEFAULTS, quota_status
 
 router = APIRouter(prefix="/organizations", tags=["Organizations"])
 
@@ -38,3 +39,44 @@ async def create_organization(
     await db.commit()
     await db.refresh(org)
     return org
+
+
+@router.get("/current")
+async def current_organization(
+    ctx: TenantContext = Depends(get_tenant), db: AsyncSession = Depends(get_db)
+):
+    status = await quota_status(db, ctx.organization)
+    return {
+        "organization": OrganizationOut.model_validate(ctx.organization),
+        "quota": status,
+        "plan_defaults": PLAN_DEFAULTS,
+    }
+
+
+@router.get("/current/quota")
+async def current_quota(
+    ctx: TenantContext = Depends(get_tenant), db: AsyncSession = Depends(get_db)
+):
+    return await quota_status(db, ctx.organization)
+
+
+@router.patch("/current/quota")
+async def update_current_quota(
+    data: OrganizationQuotasUpdate,
+    ctx: TenantContext = Depends(
+        require_roles(Role.organization_owner, Role.organization_admin)
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    org = ctx.organization
+    if data.plan is not None:
+        org.plan = data.plan.strip().lower() or org.plan
+    settings = dict(org.settings or {})
+    quotas = dict(settings.get("quotas") or {})
+    payload = data.model_dump(exclude_none=True, exclude={"plan"})
+    quotas.update(payload)
+    settings["quotas"] = quotas
+    org.settings = settings
+    await db.commit()
+    await db.refresh(org)
+    return await quota_status(db, org)

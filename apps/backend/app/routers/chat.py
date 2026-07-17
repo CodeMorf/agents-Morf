@@ -24,6 +24,7 @@ from app.schemas import (
 )
 from app.services.orchestrator import resolve_agent, run_agent
 from app.services.providers import ProviderError
+from app.services.quotas import enforce_chat_quota
 
 router = APIRouter(tags=["Chat"])
 
@@ -93,6 +94,8 @@ async def chat_completions(
     ctx: ApiContext = Depends(require_api_scope("chat:write")),
     db: AsyncSession = Depends(get_db),
 ):
+    await enforce_chat_quota(db, ctx.organization)
+
     agent = await resolve_agent(db, ctx.organization.id, data.agent_id, data.agent)
     if (data.agent_id or data.agent) and not agent:
         raise HTTPException(status_code=404, detail="Agent not found")

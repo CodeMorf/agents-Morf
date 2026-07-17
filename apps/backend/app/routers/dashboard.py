@@ -24,6 +24,7 @@ from app.models import (
     UsageRecord,
 )
 from app.services.hybrid_router import is_local_kind, read_cpu_percent
+from app.services.quotas import quota_status
 
 router = APIRouter(tags=["Dashboard"])
 
@@ -337,6 +338,7 @@ async def dashboard_usage(
             "summary": {},
             "series": {},
             "breakdowns": {},
+            "quota": await quota_status(db, ctx.organization),
         }
 
     by_day: dict[str, dict[str, float]] = {}
@@ -474,7 +476,7 @@ async def dashboard_usage(
             "memory_items_created": memory_hits,
             "rag_chunks_recovered": None,
             "estimated_cost": estimated_cost if estimated_cost > 0 else None,
-            "quota_configured": None,
+            "quota_configured": True,
             "primary_provider": primary_provider,
             "primary_model": primary_model,
         },
@@ -483,4 +485,5 @@ async def dashboard_usage(
             "by_provider": [{"name": k, "value": v} for k, v in sorted(by_provider.items())],
             "by_model": [{"name": k, "value": v} for k, v in sorted(by_model.items())],
         },
+        "quota": await quota_status(db, ctx.organization),
     }

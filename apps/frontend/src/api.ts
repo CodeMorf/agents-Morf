@@ -235,4 +235,31 @@ export type UsageReport = {
     by_provider?: UsageNamed[]
     by_model?: UsageNamed[]
   }
+  quota?: QuotaStatus
+}
+
+export type QuotaStatus = {
+  enabled: boolean
+  plan: string
+  quotas: {
+    enabled?: boolean
+    requests_per_day: number
+    tokens_per_day: number
+    max_agents: number
+    max_api_keys: number
+  }
+  used: {
+    requests_today: number
+    tokens_today: number
+    agents_count: number
+    api_keys_count: number
+  }
+  remaining?: {
+    requests_today: number
+    tokens_today: number
+    agents: number
+    api_keys: number
+  } | null
+  exceeded: string[]
+  resets_at?: string
 }

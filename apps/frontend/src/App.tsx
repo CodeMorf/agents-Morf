@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Navigate, NavLink, Route, Routes, useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -40,6 +40,7 @@ import {
   Tool,
   TrainingDataset,
   TrainingExample,
+  QuotaStatus,
   UsagePoint,
   UsageReport,
   api,
@@ -462,6 +463,20 @@ function UsagePage() {
       <Field label="Modelo" value={model} onChange={e => setModel(e.target.value)} placeholder="llama-3.1-8b-instant" />
     </div>
     <ErrorBox error={error} />
+    {data?.quota && <div className="create-box" style={{ marginBottom: 16 }}>
+      <div className="chips">
+        <span>Plan: {data.quota.plan}</span>
+        <span>Cuotas: {data.quota.enabled ? 'activas' : 'desactivadas'}</span>
+        {data.quota.exceeded?.length ? <span style={{ borderColor: '#a43e57' }}>Excedido: {data.quota.exceeded.join(', ')}</span> : <span>Dentro de cuota</span>}
+        {data.quota.resets_at && <span>Reset: {new Date(data.quota.resets_at).toLocaleString()}</span>}
+      </div>
+      <div className="metric-grid" style={{ marginTop: 12 }}>
+        <article className="metric"><span>Req hoy / límite</span><strong>{data.quota.used.requests_today} / {data.quota.quotas.requests_per_day}</strong></article>
+        <article className="metric"><span>Tokens hoy / límite</span><strong>{data.quota.used.tokens_today} / {data.quota.quotas.tokens_per_day}</strong></article>
+        <article className="metric"><span>Agentes</span><strong>{data.quota.used.agents_count} / {data.quota.quotas.max_agents}</strong></article>
+        <article className="metric"><span>API keys</span><strong>{data.quota.used.api_keys_count} / {data.quota.quotas.max_api_keys}</strong></article>
+      </div>
+    </div>}
     {!data?.has_data && <div className="empty"><Activity size={40} /><p>{data?.message || 'No hay datos suficientes'}</p></div>}
     {data?.has_data && <>
       <div className="metric-grid">
@@ -1016,10 +1031,56 @@ function MembersPage() {
 }
 
 function SettingsPage() {
+  const queryClient = useQueryClient()
+  const { data, error } = useQuery({
+    queryKey: ['org-current'],
+    queryFn: () => api<{ organization: Organization & { plan: string }; quota: QuotaStatus; plan_defaults: Record<string, unknown> }>('/organizations/current'),
+  })
+  const [form, setForm] = useState({ plan: 'trial', requests_per_day: 200, tokens_per_day: 100000, max_agents: 5, max_api_keys: 3, enabled: true })
+  useEffect(() => {
+    if (!data?.quota) return
+    setForm({
+      plan: data.quota.plan || 'trial',
+      requests_per_day: data.quota.quotas.requests_per_day,
+      tokens_per_day: data.quota.quotas.tokens_per_day,
+      max_agents: data.quota.quotas.max_agents,
+      max_api_keys: data.quota.quotas.max_api_keys,
+      enabled: data.quota.enabled,
+    })
+  }, [data])
+  const save = useMutation({
+    mutationFn: () => api<QuotaStatus>('/organizations/current/quota', {
+      method: 'PATCH',
+      body: JSON.stringify(form),
+    }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['org-current'] }); queryClient.invalidateQueries({ queryKey: ['usage'] }) },
+  })
   return <section className="panel">
-    <PageHeader eyebrow="PLATFORM BOUNDARY" title="Architecture settings" subtitle="Agents Morf is the AI control plane, not the operational backend of every product." />
-    <div className="architecture-flow"><div>External products</div><span>→</span><div>Agents Morf API</div><span>→</span><div>Memory · RAG · Models · Tools</div><span>→</span><div>Structured response/tool call</div></div>
-    <div className="three"><div><b>Safe Grok Build integration</b><p>The Grok Build source stays untouched. Agents Morf can optionally call its installed binary through a provider adapter.</p></div><div><b>No SMTP coupling</b><p>Email and messaging remain responsibilities of ALLSENDER or each external backend.</p></div><div><b>Training, not magic</b><p>Prompt versions, curated examples, memory, knowledge and evaluations train behavior. Fine-tuning can be added later.</p></div></div>
+    <PageHeader eyebrow="PLATFORM BOUNDARY" title="Settings & quotas" subtitle="Plan, límites diarios y arquitectura. Exceso de cuota devuelve HTTP 429 en chat/agents/keys." />
+    <ErrorBox error={error || save.error} />
+    {data && <div className="create-box">
+      <p className="muted">Organización: <b>{data.organization.name}</b> · slug <code>{data.organization.slug}</code></p>
+      <form className="form-grid" onSubmit={e => { e.preventDefault(); save.mutate() }}>
+        <Select label="Plan" value={form.plan} onChange={e => setForm({ ...form, plan: e.target.value })}>
+          <option value="trial">trial</option>
+          <option value="starter">starter</option>
+          <option value="pro">pro</option>
+          <option value="enterprise">enterprise</option>
+        </Select>
+        <label className="checkbox-row"><input type="checkbox" checked={form.enabled} onChange={e => setForm({ ...form, enabled: e.target.checked })} /> Cuotas activas</label>
+        <Field label="Requests / día" type="number" value={form.requests_per_day} onChange={e => setForm({ ...form, requests_per_day: Number(e.target.value) })} />
+        <Field label="Tokens / día" type="number" value={form.tokens_per_day} onChange={e => setForm({ ...form, tokens_per_day: Number(e.target.value) })} />
+        <Field label="Max agents" type="number" value={form.max_agents} onChange={e => setForm({ ...form, max_agents: Number(e.target.value) })} />
+        <Field label="Max API keys" type="number" value={form.max_api_keys} onChange={e => setForm({ ...form, max_api_keys: Number(e.target.value) })} />
+        <button className="primary compact" disabled={save.isPending}>{save.isPending ? 'Guardando…' : 'Guardar cuotas'}</button>
+      </form>
+      {data.quota && <div className="chips" style={{ marginTop: 12 }}>
+        <span>Usado hoy: {data.quota.used.requests_today} req · {data.quota.used.tokens_today} tokens</span>
+        <span>Restante: {data.quota.remaining?.requests_today ?? '—'} req</span>
+      </div>}
+    </div>}
+    <div className="architecture-flow" style={{ marginTop: 20 }}><div>External products</div><span>→</span><div>Agents Morf API</div><span>→</span><div>Quota · Memory · RAG · Models</div><span>→</span><div>Structured response</div></div>
+    <div className="three"><div><b>429 on limit</b><p>Chat, agent create and API key create enforce daily/plan quotas.</p></div><div><b>No SMTP coupling</b><p>Email remains outside Agents Morf until wired intentionally.</p></div><div><b>Plans are config</b><p>trial/starter/pro/enterprise defaults can be overridden per org.</p></div></div>
   </section>
 }
 

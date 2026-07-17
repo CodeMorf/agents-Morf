@@ -8,6 +8,7 @@ from app.core.database import get_db
 from app.dependencies import TenantContext, get_tenant, require_roles
 from app.models import Agent, AgentKnowledgeBase, AgentTool, AgentVersion, Role
 from app.schemas import AgentCreate, AgentOut, AgentToolLink, AgentUpdate, AgentVersionOut
+from app.services.quotas import enforce_agent_quota
 
 router = APIRouter(prefix="/agents", tags=["Agents"])
 
@@ -35,6 +36,7 @@ async def create_agent(
     ),
     db: AsyncSession = Depends(get_db),
 ):
+    await enforce_agent_quota(db, ctx.organization)
     agent = Agent(organization_id=ctx.organization.id, **data.model_dump())
     db.add(agent)
     await db.flush()
