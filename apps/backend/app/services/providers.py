@@ -29,7 +29,7 @@ class ProviderResult:
     content: str
     model: str
     provider: str
-    usage: dict[str, int]
+    usage: dict[str, Any]
 
 
 async def complete(

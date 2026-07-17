@@ -432,7 +432,7 @@ class ChatCompletionResponse(BaseModel):
     conversation_id: uuid.UUID
     assistant_message_id: uuid.UUID
     choices: list[ChatChoice]
-    usage: dict[str, int] = Field(default_factory=dict)
+    usage: dict[str, Any] = Field(default_factory=dict)
     memory_hits: int = 0
     knowledge_hits: int = 0
     request_id: str = ""
