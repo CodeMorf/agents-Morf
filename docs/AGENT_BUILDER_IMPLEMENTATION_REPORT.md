@@ -9,7 +9,7 @@
 | | SHA |
 |--|-----|
 | Baseline (pre-feature HEAD) | `72c0f97b0998e05e250f8916824906828e87600a` |
-| Final (this phase) | *see git after commit* |
+| Final (this phase) | `6dd63810ebc5cc6af317463e2d5408b9a8cabce3` |
 
 `main` was **not** merged, force-pushed, or modified.
 
