@@ -1,7 +1,19 @@
-/** ChatGPT / Grok style client workspace — providers stay server-side. */
+/** Modern client chat — memory & training applied in backend; UI shows what matters. */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Bot, MessageSquarePlus, Moon, Send, Sun, Trash2 } from 'lucide-react'
+import {
+  Bot,
+  Brain,
+  BookOpen,
+  GraduationCap,
+  HardDrive,
+  MessageSquarePlus,
+  Moon,
+  Send,
+  Sparkles,
+  Sun,
+  Trash2,
+} from 'lucide-react'
 import { Agent, ChatResponse, api } from './api'
 
 export type ConversationSummary = {
@@ -18,9 +30,29 @@ export type ChatMessage = {
   content: string
   model?: string
   provider?: string
+  memory_hits?: number
+  knowledge_hits?: number
+  trained?: boolean
 }
 
 type Theme = 'dark' | 'light'
+
+type MemoryHighlight = {
+  id: string
+  kind: string
+  scope: string
+  content: string
+  importance: number
+  source: string
+}
+
+type MemoryBank = {
+  total_items: number
+  total_bytes: number
+  total_kb: number
+  total_mb: number
+  items: MemoryHighlight[]
+}
 
 export function useTheme(): [Theme, () => void] {
   const [theme, setTheme] = useState<Theme>(() => {
@@ -49,12 +81,27 @@ export function ChatWorkspace() {
   const [conversationId, setConversationId] = useState<string>()
   const [history, setHistory] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
-  const [meta, setMeta] = useState<{ provider?: string; model?: string; latency?: number }>({})
+  const [meta, setMeta] = useState<{
+    provider?: string
+    model?: string
+    latency?: number
+    memory?: number
+    knowledge?: number
+  }>({})
   const bottomRef = useRef<HTMLDivElement>(null)
   const selectedAgent = useMemo(
     () => agents.find(a => a.id === agentId) || agents[0],
     [agents, agentId],
   )
+
+  const { data: memoryBank } = useQuery({
+    queryKey: ['memory-highlights', selectedAgent?.id],
+    queryFn: () =>
+      api<MemoryBank>(
+        `/memory/highlights?limit=10${selectedAgent?.id ? `&agent_id=${selectedAgent.id}` : ''}`,
+      ),
+    enabled: Boolean(selectedAgent?.id || agents.length >= 0),
+  })
 
   useEffect(() => {
     if (!agentId && agents[0]) setAgentId(agents[0].id)
@@ -65,8 +112,7 @@ export function ChatWorkspace() {
   }, [history, meta])
 
   const loadMessages = useMutation({
-    mutationFn: (id: string) =>
-      api<ChatMessage[]>(`/conversations/${id}/messages`),
+    mutationFn: (id: string) => api<ChatMessage[]>(`/conversations/${id}/messages`),
     onSuccess: (rows, id) => {
       setConversationId(id)
       setHistory(
@@ -94,6 +140,8 @@ export function ChatWorkspace() {
     },
     onSuccess: result => {
       const answer = result.choices[0]?.message
+      const mem = result.memory_hits ?? 0
+      const know = result.knowledge_hits ?? 0
       setHistory(h => [
         ...h,
         { role: 'user', content: input },
@@ -104,6 +152,11 @@ export function ChatWorkspace() {
             (answer?.tool_calls?.length
               ? `[Tool: ${answer.tool_calls.map(t => t.name).join(', ')}]`
               : ''),
+          memory_hits: mem,
+          knowledge_hits: know,
+          trained: Boolean(selectedAgent?.memory_enabled || selectedAgent?.knowledge_enabled),
+          provider: result.provider,
+          model: result.model,
         },
       ])
       setConversationId(result.conversation_id)
@@ -111,10 +164,13 @@ export function ChatWorkspace() {
         provider: result.provider,
         model: result.model,
         latency: result.latency_ms,
+        memory: mem,
+        knowledge: know,
       })
       setInput('')
       refetchConvos()
       queryClient.invalidateQueries({ queryKey: ['usage'] })
+      queryClient.invalidateQueries({ queryKey: ['memory-highlights'] })
     },
   })
 
@@ -125,8 +181,13 @@ export function ChatWorkspace() {
     setInput('')
   }
 
+  const bankMb = memoryBank?.total_mb ?? 0
+  const bankKb = memoryBank?.total_kb ?? 0
+  const bankLabel =
+    bankMb >= 0.01 ? `${bankMb.toFixed(3)} MB` : `${bankKb.toFixed(1)} KB`
+
   return (
-    <div className="gpt-shell">
+    <div className="gpt-shell gpt-shell-3">
       <aside className="gpt-sidebar">
         <button type="button" className="primary compact gpt-new" onClick={newChat}>
           <MessageSquarePlus size={16} /> Nuevo chat
@@ -158,10 +219,10 @@ export function ChatWorkspace() {
       <section className="gpt-main">
         <header className="gpt-top">
           <div>
-            <p className="eyebrow">CHAT</p>
+            <p className="eyebrow">CHAT INTELIGENTE</p>
             <h1>{selectedAgent?.name || 'Agents Morf'}</h1>
             <p className="muted">
-              El modelo se elige en el backend (Groq). Tú solo conversas.
+              Memoria y entrenamiento corren en el backend. Aquí solo conversas.
             </p>
           </div>
           <label className="gpt-agent-pick">
@@ -182,19 +243,35 @@ export function ChatWorkspace() {
           </label>
         </header>
 
+        <div className="gpt-context-bar">
+          <span className="gpt-chip">
+            <HardDrive size={14} /> Banco memoria: <b>{bankLabel}</b>
+          </span>
+          <span className="gpt-chip">
+            <Brain size={14} /> {memoryBank?.total_items ?? 0} recuerdos
+          </span>
+          <span className="gpt-chip">
+            <GraduationCap size={14} /> Entrenamiento:{' '}
+            {selectedAgent?.memory_enabled || selectedAgent?.knowledge_enabled ? 'activo' : 'básico'}
+          </span>
+          <span className="gpt-chip">
+            <Sparkles size={14} /> Modelo vía backend
+          </span>
+        </div>
+
         <div className="gpt-messages">
           {history.length === 0 && (
             <div className="gpt-hero-empty">
               <Bot size={48} />
               <h2>¿En qué puedo ayudarte?</h2>
               <p className="muted">
-                Interfaz tipo ChatGPT / Grok. Sin catálogo de proveedores en el cliente.
+                Chat moderno con lo memorizado y entrenado. Sin administrar memoria a mano.
               </p>
               <div className="gpt-suggestions">
                 {[
-                  'Resume qué hace Agents Morf',
-                  'Ayúdame a redactar un mensaje de ventas',
-                  'Explícame cómo integrar la API de chat',
+                  '¿Qué recuerdas de mi empresa?',
+                  'Ayúdame con un mensaje para un cliente',
+                  'Resume lo importante de nuestra base',
                 ].map(s => (
                   <button type="button" key={s} className="secondary compact" onClick={() => setInput(s)}>
                     {s}
@@ -208,6 +285,25 @@ export function ChatWorkspace() {
               <div className={`gpt-bubble ${m.role}`}>
                 <b>{m.role === 'user' ? 'Tú' : 'Asistente'}</b>
                 <p>{m.content}</p>
+                {m.role === 'assistant' && (m.memory_hits != null || m.knowledge_hits != null) && (
+                  <div className="gpt-msg-tags">
+                    {(m.memory_hits ?? 0) > 0 && (
+                      <span>
+                        <Brain size={12} /> Memoria ×{m.memory_hits}
+                      </span>
+                    )}
+                    {(m.knowledge_hits ?? 0) > 0 && (
+                      <span>
+                        <BookOpen size={12} /> Conocimiento ×{m.knowledge_hits}
+                      </span>
+                    )}
+                    {m.trained && (
+                      <span>
+                        <GraduationCap size={12} /> Entrenado
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -215,7 +311,7 @@ export function ChatWorkspace() {
             <div className="gpt-row assistant">
               <div className="gpt-bubble assistant">
                 <b>Asistente</b>
-                <p className="muted">Pensando…</p>
+                <p className="muted">Pensando con memoria y entrenamiento…</p>
               </div>
             </div>
           )}
@@ -252,8 +348,8 @@ export function ChatWorkspace() {
           </button>
         </form>
         <div className="gpt-meta">
-          <span>{meta.provider ? `vía ${meta.provider}` : 'modelo en backend'}</span>
-          <span>{meta.model || selectedAgent?.model || 'auto'}</span>
+          {(meta.memory ?? 0) > 0 && <span>Memoria usada: {meta.memory}</span>}
+          {(meta.knowledge ?? 0) > 0 && <span>RAG: {meta.knowledge}</span>}
           {meta.latency != null && <span>{meta.latency} ms</span>}
           {conversationId && (
             <button type="button" className="ghost" onClick={newChat}>
@@ -262,6 +358,42 @@ export function ChatWorkspace() {
           )}
         </div>
       </section>
+
+      {/* Memory bank — important facts only (read-only for client) */}
+      <aside className="gpt-memory-panel">
+        <div className="gpt-mb-head">
+          <HardDrive size={18} />
+          <div>
+            <strong>Memoria del agente</strong>
+            <small>Solo lectura · administrada en backend</small>
+          </div>
+        </div>
+        <div className="gpt-mb-size">
+          <b>{bankLabel}</b>
+          <span>{memoryBank?.total_items ?? 0} ítems activos</span>
+        </div>
+        <p className="gpt-mb-label">Cosas importantes</p>
+        <div className="gpt-mb-list">
+          {(memoryBank?.items || []).map(item => (
+            <article key={item.id} className="gpt-mb-card">
+              <div className="gpt-mb-card-top">
+                <span className="gpt-chip tiny">{item.kind}</span>
+                <span className="muted tiny">{Math.round(item.importance * 100)}%</span>
+              </div>
+              <p>{item.content}</p>
+            </article>
+          ))}
+          {(!memoryBank?.items || memoryBank.items.length === 0) && (
+            <p className="muted gpt-empty-side">
+              Aún no hay recuerdos importantes. El chat irá memorizando hechos útiles
+              automáticamente (backend).
+            </p>
+          )}
+        </div>
+        <div className="gpt-mb-foot muted">
+          <Brain size={14} /> No editas memoria aquí — el sistema la usa al responder.
+        </div>
+      </aside>
     </div>
   )
 }

@@ -120,6 +120,25 @@ td small{display:block;color:var(--muted);margin-top:5px}
 
 /* ChatGPT / Grok layout */
 .gpt-shell{display:grid;grid-template-columns:280px 1fr;height:100vh;background:var(--bg)}
+.gpt-shell-3{grid-template-columns:260px 1fr 280px}
+.gpt-context-bar{display:flex;flex-wrap:wrap;gap:8px;padding:10px 24px;border-bottom:1px solid var(--border)}
+.gpt-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:var(--chip-bg);border:1px solid var(--border);font-size:12px;color:var(--text)}
+.gpt-chip.tiny,.tiny{font-size:11px}
+.gpt-msg-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.gpt-msg-tags span{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:4px 8px;border-radius:999px;background:var(--surface-3);border:1px solid var(--border);color:var(--muted)}
+.gpt-memory-panel{border-left:1px solid var(--border);background:var(--aside);padding:16px;display:flex;flex-direction:column;gap:12px;min-height:0;overflow:hidden}
+.gpt-mb-head{display:flex;gap:10px;align-items:flex-start}
+.gpt-mb-head strong{display:block;font-size:14px}
+.gpt-mb-head small{color:var(--muted);font-size:11px}
+.gpt-mb-size{display:flex;justify-content:space-between;align-items:baseline;padding:12px;border-radius:12px;background:var(--surface-2);border:1px solid var(--border)}
+.gpt-mb-size b{font-size:20px}
+.gpt-mb-size span{color:var(--muted);font-size:12px}
+.gpt-mb-label{margin:0;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.gpt-mb-list{flex:1;overflow:auto;display:grid;gap:8px;align-content:start}
+.gpt-mb-card{padding:12px;border-radius:12px;background:var(--surface-2);border:1px solid var(--border)}
+.gpt-mb-card p{margin:8px 0 0;font-size:13px;line-height:1.45;color:var(--text)}
+.gpt-mb-card-top{display:flex;justify-content:space-between;align-items:center}
+.gpt-mb-foot{display:flex;gap:6px;align-items:flex-start;font-size:11px;line-height:1.4}
 .gpt-sidebar{border-right:1px solid var(--border);background:var(--aside);padding:16px;display:flex;flex-direction:column;gap:12px;min-height:0}
 .gpt-new{width:100%}
 .gpt-convo-list{flex:1;overflow:auto;display:grid;gap:6px;align-content:start}
@@ -148,7 +167,8 @@ td small{display:block;color:var(--muted);margin-top:5px}
 .gpt-meta .ghost{border:0;background:transparent;color:var(--muted);display:inline-flex;gap:4px;align-items:center}
 .gpt-error{margin:0 18vw}
 @media(max-width:1100px){.gpt-messages,.gpt-composer,.gpt-meta,.gpt-error{padding-left:24px;padding-right:24px}}
-@media(max-width:900px){.gpt-shell{grid-template-columns:1fr}.gpt-sidebar{display:none}}
+@media(max-width:1200px){.gpt-shell-3{grid-template-columns:220px 1fr}.gpt-memory-panel{display:none}}
+@media(max-width:900px){.gpt-shell,.gpt-shell-3{grid-template-columns:1fr}.gpt-sidebar{display:none}}
 
 @media(max-width:1200px){.metric-grid{grid-template-columns:repeat(3,1fr)}.card-grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:900px){.three,.split{grid-template-columns:1fr}.studio-toolbar{grid-template-columns:1fr}.card-grid{grid-template-columns:1fr}}

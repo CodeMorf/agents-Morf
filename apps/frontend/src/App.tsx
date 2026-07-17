@@ -307,10 +307,10 @@ const navItems: NavItem[] = [
   { to: '/members', label: 'Equipo', icon: Users, when: 'org_admin' },
   { to: '/usage', label: 'Uso', icon: Activity, when: 'org_admin' },
   { to: '/knowledge', label: 'Knowledge', icon: Database, when: 'org_admin' },
-  { to: '/memory', label: 'Memory', icon: BrainCircuit, when: 'org_admin' },
-  { to: '/training', label: 'Training', icon: TestTube2, when: 'org_admin' },
   { to: '/feedback', label: 'Feedback', icon: MessageCircleWarning, when: 'org_admin' },
   { to: '/tools', label: 'Tools', icon: Wrench, when: 'org_admin' },
+  { to: '/memory', label: 'Memory admin', icon: BrainCircuit, when: 'platform' },
+  { to: '/training', label: 'Training', icon: TestTube2, when: 'platform' },
   { to: '/models', label: 'Modelos', icon: Sparkles, when: 'platform' },
   { to: '/providers', label: 'Providers', icon: Network, when: 'platform' },
   { to: '/playground', label: 'Playground', icon: Braces, when: 'platform' },
@@ -1198,8 +1198,8 @@ function Protected() {
       <Route path="/members" element={<Layout><OrgAdminOnly><MembersPage /></OrgAdminOnly></Layout>} />
       <Route path="/usage" element={<Layout><OrgAdminOnly><UsagePage /></OrgAdminOnly></Layout>} />
       <Route path="/knowledge" element={<Layout><OrgAdminOnly><KnowledgePage /></OrgAdminOnly></Layout>} />
-      <Route path="/memory" element={<Layout><OrgAdminOnly><MemoryPage /></OrgAdminOnly></Layout>} />
-      <Route path="/training" element={<Layout><OrgAdminOnly><TrainingPage /></OrgAdminOnly></Layout>} />
+      <Route path="/memory" element={<Layout><PlatformOnly><MemoryPage /></PlatformOnly></Layout>} />
+      <Route path="/training" element={<Layout><PlatformOnly><TrainingPage /></PlatformOnly></Layout>} />
       <Route path="/feedback" element={<Layout><OrgAdminOnly><FeedbackPage /></OrgAdminOnly></Layout>} />
       <Route path="/tools" element={<Layout><OrgAdminOnly><ToolsPage /></OrgAdminOnly></Layout>} />
       <Route path="/settings" element={<Layout><OrgAdminOnly><SettingsPage /></OrgAdminOnly></Layout>} />
