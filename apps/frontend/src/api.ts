@@ -12,7 +12,21 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   const response = await fetch(`${API_BASE}${path}`, { ...options, headers })
   if (!response.ok) {
     const body = await response.json().catch(() => ({ detail: response.statusText }))
-    throw new Error(body.detail || body.message || 'Request failed')
+    const detail = body.detail ?? body.message
+    let message = 'Request failed'
+    if (typeof detail === 'string') {
+      message = detail
+    } else if (Array.isArray(detail)) {
+      message = detail
+        .map((item: { msg?: string; loc?: unknown[]; type?: string }) => {
+          const field = Array.isArray(item.loc) ? item.loc.filter(x => x !== 'body').join('.') : ''
+          return field ? `${field}: ${item.msg || item.type || 'invalid'}` : (item.msg || JSON.stringify(item))
+        })
+        .join(' · ')
+    } else if (detail && typeof detail === 'object') {
+      message = (detail as { message?: string }).message || JSON.stringify(detail)
+    }
+    throw new Error(message)
   }
   if (response.status === 204) return undefined as T
   return response.json()
