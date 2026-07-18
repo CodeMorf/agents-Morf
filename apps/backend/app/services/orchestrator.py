@@ -432,19 +432,22 @@ async def run_agent(
             ssh_prefetch = execute_ssh_tool("platform.ssh_test", ssh_hint)
             # If login works, immediately explore the server (agent must use this output).
             if ssh_prefetch.get("ok"):
+                # Keep command simple (no nested quotes) for remote sh -c compatibility.
                 explore_cmd = (
-                    "set -e; echo '=== HOST ==='; hostname; whoami; pwd; "
+                    "echo '=== HOST ==='; hostname; whoami; pwd; "
                     "echo '=== OS ==='; uname -a; "
-                    "echo '=== DISK ==='; df -h 2>/dev/null | head -12; "
-                    "echo '=== / ==='; ls -la / 2>/dev/null | head -25; "
-                    "echo '=== /www ==='; ls -la /www 2>/dev/null | head -20; "
-                    "echo '=== /www/wwwroot ==='; ls -la /www/wwwroot 2>/dev/null | head -25; "
-                    "echo '=== DOCKER ==='; (docker ps --format 'table {{.Names}}\\t{{.Status}}' 2>/dev/null || true) | head -20"
+                    "echo '=== DISK ==='; df -h | head -12; "
+                    "echo '=== ROOT ==='; ls -la / | head -25; "
+                    "echo '=== WWW ==='; ls -la /www 2>/dev/null | head -20; "
+                    "echo '=== WWWROOT ==='; ls -la /www/wwwroot 2>/dev/null | head -25; "
+                    "echo '=== DOCKER ==='; docker ps 2>/dev/null | head -20 || true"
                 )
                 ssh_exec_prefetch = execute_ssh_tool(
                     "platform.ssh_exec",
                     {
-                        **ssh_hint,
+                        "host": ssh_hint["host"],
+                        "username": ssh_hint["username"],
+                        "password": ssh_hint["password"],
                         "command": explore_cmd,
                     },
                 )
