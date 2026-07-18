@@ -1,3 +1,6 @@
+import hashlib
+import hmac
+import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -44,6 +47,25 @@ def decode_token(token: str, expected_type: str = "access") -> dict[str, Any]:
     return payload
 
 
+def generate_api_key() -> tuple[str, str]:
+    raw = f"am_{secrets.token_urlsafe(36)}"
+    return raw, raw[:14]
+
+
+def hash_api_key(raw: str) -> str:
+    return hmac.new(settings.secret_key.encode(), raw.encode(), hashlib.sha256).hexdigest()
+
+
+def constant_time_key_match(raw: str, stored_hash: str) -> bool:
+    return hmac.compare_digest(hash_api_key(raw), stored_hash)
+
+
+def generate_opaque_token(prefix: str = "tok") -> tuple[str, str]:
+    """Return (raw_token, token_hash) for password reset / invites."""
+    raw = f"{prefix}_{secrets.token_urlsafe(32)}"
+    return raw, hash_api_key(raw)
+
+
 def _fernet() -> Fernet | None:
     if not settings.encryption_key:
         return None
@@ -70,4 +92,4 @@ def decrypt_secret(value: str | None) -> str | None:
     try:
         return cipher.decrypt(value.encode()).decode()
     except InvalidToken as exc:
-        raise RuntimeError("Unable to decrypt provider secret") from exc
+        raise RuntimeError("Unable to decrypt secret") from exc

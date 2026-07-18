@@ -1,0 +1,137 @@
+# Standalone parallel staging stack (does not touch codemorf-agent on :8000).
+# Usage:
+#   docker compose -p agentsmorfv02 --env-file /www/wwwroot/agents-morf-v02/shared/.env \
+#     -f docker-compose.phase1.yml up -d --build
+#
+# Frontend SPA is expected prebuilt at shared/frontend_dist (avoids Docker npm flakes).
+# Do NOT enable local-ai / second Ollama. Point OLLAMA_BASE_URL at host Ollama if needed.
+
+name: agentsmorfv02
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-agents_morf_v02}
+      POSTGRES_USER: ${POSTGRES_USER:-agents_morf_v02}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-CHANGE_ME}
+    volumes:
+      - am_v02_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks: [am_internal]
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - am_v02_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks: [am_internal]
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.6
+    volumes:
+      - am_v02_qdrant:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/6333'"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks: [am_internal]
+
+  backend:
+    build:
+      context: ./apps/backend
+    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: redis://redis:6379/0
+      QDRANT_URL: http://qdrant:6333
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-http://host.docker.internal:11434}
+      DEFAULT_PROVIDER: ${DEFAULT_PROVIDER:-groq}
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-llama-3.1-8b-instant}
+      ALLOW_LOCAL_CHAT_FALLBACK: ${ALLOW_LOCAL_CHAT_FALLBACK:-false}
+    ports:
+      - "127.0.0.1:8100:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    volumes:
+      - am_v02_uploads:/app/storage/uploads
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 20s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [am_internal]
+
+  worker:
+    build:
+      context: ./apps/backend
+    command: ["python", "-m", "app.worker"]
+    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: redis://redis:6379/0
+      QDRANT_URL: http://qdrant:6333
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-http://host.docker.internal:11434}
+      ALLOW_LOCAL_CHAT_FALLBACK: ${ALLOW_LOCAL_CHAT_FALLBACK:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [am_internal]
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18080:80"
+    volumes:
+      - ./infrastructure/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${FRONTEND_DIST_PATH:-./shared/frontend_dist}:/usr/share/nginx/html:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks: [am_internal]
+
+volumes:
+  am_v02_postgres:
+  am_v02_redis:
+  am_v02_qdrant:
+  am_v02_uploads:
+
+networks:
+  am_internal:
+    driver: bridge

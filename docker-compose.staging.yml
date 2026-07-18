@@ -1,0 +1,51 @@
+# Staging override: parallel deploy next to codemorf-agent (port 8000 untouched).
+# Usage:
+#   docker compose -p agentsmorfv02 -f docker-compose.yml -f docker-compose.staging.yml up -d --build
+# Do NOT enable profile local-ai. Host Ollama may be reached via host.docker.internal / gateway IP.
+
+services:
+  postgres:
+    # Isolated DB — not shared with codemorf-agent
+    ports: []
+    networks: [internal]
+
+  redis:
+    ports: []
+    networks: [internal]
+
+  qdrant:
+    ports: []
+    networks: [internal]
+
+  backend:
+    ports:
+      - "127.0.0.1:8100:8000"
+    environment:
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://172.17.0.1:11434}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-http://172.17.0.1:11434}
+      DEFAULT_PROVIDER: ${DEFAULT_PROVIDER:-groq}
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-llama-3.1-8b-instant}
+      ALLOW_LOCAL_CHAT_FALLBACK: ${ALLOW_LOCAL_CHAT_FALLBACK:-false}
+      LOCAL_CPU_THRESHOLD_PERCENT: ${LOCAL_CPU_THRESHOLD_PERCENT:-60}
+      LOCAL_INFERENCE_TIMEOUT_SECONDS: ${LOCAL_INFERENCE_TIMEOUT_SECONDS:-25}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [internal]
+
+  worker:
+    environment:
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://172.17.0.1:11434}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-http://172.17.0.1:11434}
+      ALLOW_LOCAL_CHAT_FALLBACK: ${ALLOW_LOCAL_CHAT_FALLBACK:-false}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [internal]
+
+  nginx:
+    ports:
+      - "127.0.0.1:18080:80"
+    networks: [internal]
+
+  # Explicitly do not start containerized Ollama in staging.
+  ollama:
+    profiles: ["local-ai", "never"]

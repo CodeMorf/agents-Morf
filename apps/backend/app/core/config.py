@@ -24,18 +24,30 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./agents_morf.db"
     redis_url: str = "redis://localhost:6379/0"
     qdrant_url: str = "http://localhost:6333"
+    qdrant_collection: str = "agents_morf_context"
     auto_create_schema: bool = True
+    # Idempotent official catalog seed on API boot (safe; no per-tenant agents created).
+    auto_seed_agent_templates: bool = True
 
     default_organization_name: str = "CodeMorf"
-    default_provider: str = "ollama"
-    default_model: str = "qwen2.5:7b"
+    default_provider: str = "groq"
+    default_model: str = "llama-3.1-8b-instant"
+
+    # Phase 2: public company self-registration (staging can enable; prod may disable)
+    allow_public_registration: bool = True
+    registration_default_plan: str = "trial"
+    # When true (staging), forgot-password / invite responses may include one-time tokens
+    # because outbound email is not wired yet. Never enable on public internet long-term.
+    return_auth_tokens_in_response: bool = True
+    password_reset_expire_minutes: int = 60
+    invite_expire_hours: int = 72
 
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4.1-mini"
     groq_api_key: str | None = None
     groq_base_url: str = "https://api.groq.com/openai/v1"
-    groq_model: str | None = None
+    groq_model: str | None = "llama-3.1-8b-instant"
     openrouter_api_key: str | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_model: str | None = None
@@ -47,16 +59,77 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:7b"
 
-    mail_enabled: bool = False
-    smtp2go_api_url: str = "https://api.smtp2go.com/v3"
-    smtp2go_api_key: str | None = None
-    mail_from_address: str = "it@codemorf.tech"
-    mail_from_name: str = "Agents Morf"
-    mail_reply_to: str = "it@codemorf.tech"
+    # Hybrid routing: production chat never falls back to local Ollama by default.
+    allow_local_chat_fallback: bool = False
+    local_cpu_threshold_percent: float = 60.0
+    local_inference_timeout_seconds: int = 25
+    local_max_parallel_inferences: int = 1
 
-    @field_validator("cors_origins", mode="before")
+    embedding_provider: Literal["ollama", "openai_compatible", "disabled"] = "ollama"
+    embedding_base_url: str = "http://localhost:11434"
+    embedding_api_key: str | None = None
+    embedding_model: str = "nomic-embed-text"
+    embedding_dimensions: int | None = None
+
+    grok_build_enabled: bool = False
+    grok_build_binary: str = "grok"
+    grok_build_cwd: str = "/workspace"
+    grok_build_model: str = "grok-build"
+    grok_build_timeout_seconds: int = 300
+
+    memory_auto_extract: bool = True
+    memory_max_context_chars: int = 6000
+    knowledge_max_context_chars: int = 10000
+    knowledge_max_file_bytes: int = 10_485_760
+    training_max_examples: int = 6
+    tool_max_rounds: int = 3
+    tool_default_timeout_seconds: int = 30
+    tool_allowed_hosts: list[str] | str = Field(default_factory=list)
+    tool_allow_http: bool = False
+    tool_allow_private_networks: bool = False
+    # Platform web search (all agents). Uses DuckDuckGo by default (no key).
+    web_search_enabled: bool = True
+    web_search_max_results: int = 6
+    web_fetch_enabled: bool = True
+    web_fetch_max_chars: int = 8000
+
+    # Grok Build-style sandboxed workspace agent (Studio/Terminal).
+    workspace_agent_enabled: bool = True
+    workspace_root: str = "storage/workspaces"
+    workspace_shell_enabled: bool = True
+    workspace_shell_timeout_seconds: int = 45
+    workspace_max_file_bytes: int = 512_000
+    workspace_tool_output_chars: int = 20_000
+    workspace_shell_allowlist: list[str] | str = Field(
+        default_factory=lambda: [
+            "python",
+            "python3",
+            "py",
+            "pytest",
+            "npm",
+            "npx",
+            "node",
+            "git",
+            "ls",
+            "dir",
+            "type",
+            "cat",
+            "echo",
+            "pwd",
+            "whoami",
+            "pip",
+            "pip3",
+            "ruff",
+        ]
+    )
+    # Controlled SSH for Studio (Grok-like remote ops). Never log passwords.
+    workspace_ssh_enabled: bool = True
+    workspace_ssh_timeout_seconds: int = 45
+    workspace_ssh_max_output_chars: int = 20_000
+
+    @field_validator("cors_origins", "tool_allowed_hosts", "workspace_shell_allowlist", mode="before")
     @classmethod
-    def split_origins(cls, value):
+    def split_csv_values(cls, value):
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value

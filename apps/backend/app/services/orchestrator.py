@@ -1,41 +1,396 @@
+from __future__ import annotations
+
+import json
 import uuid
+from dataclasses import dataclass, field
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.security import decrypt_secret
-from app.models import Agent, Provider
+from app.models import Agent, Provider, TrainingExample
+from app.services.hybrid_router import TaskClass, decide, order_configs
+from app.services.knowledge import format_knowledge_context, search_knowledge
+from app.services.memory import format_memory_context, search_memory
 from app.services.providers import ProviderConfig, ProviderError, ProviderResult, complete
+from app.services.builtin_tools import (
+    builtin_tool_definitions,
+    execute_builtin_tool,
+    fetch_public_url,
+    format_builtin_tools_prompt,
+    simulate_client_tool_result,
+    web_search,
+)
+from app.services.tools import execute_tool, format_tools_prompt, parse_tool_call, tools_for_agent
+from app.services.remote_ssh import execute_ssh_tool, parse_ssh_hint_from_user_text
+from app.services.workspace_agent import (
+    execute_workspace_tool,
+    format_workspace_tools_prompt,
+    resolve_canonical_tool,
+    workspace_tool_names,
+)
 
-DEFAULT_SALES_PROMPT = """You are an autonomous business agent for the organization. Speak naturally, be concise and helpful. Discover the customer's goal before proposing an action. Never invent availability, prices, policies or completed actions. When an action requires a business record or external tool, explain what is needed and use only approved tools. Respect privacy, consent and human escalation rules."""
+
+def _append_tool_exchange(
+    messages: list[dict[str, Any]],
+    *,
+    assistant_text: str,
+    tool_name: str,
+    status: str,
+    payload: dict[str, Any],
+    call_id: str,
+) -> None:
+    """Append tool call + result in a format ALL providers accept (no role=tool).
+
+    Groq/OpenAI reject bare role=tool without tool_call_id / structured tool_calls.
+    We keep a simple text protocol that works with every chat-completions model.
+    """
+    if not assistant_text:
+        assistant_text = json.dumps(
+            {
+                "type": "tool_call",
+                "tool": tool_name,
+                "arguments": payload.get("arguments_echo") or {},
+            },
+            ensure_ascii=False,
+        )
+    messages.append({"role": "assistant", "content": assistant_text})
+    body = {
+        "tool_call_id": call_id,
+        "tool": tool_name,
+        "status": status,
+        "result": payload,
+    }
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                "TOOL_RESULT (executed by Agents Morf). Use this data to answer the user now. "
+                "If result.results exists, summarize with titles/URLs. "
+                f"payload={json.dumps(body, ensure_ascii=False)}"
+            ),
+        }
+    )
+
+
+def _wants_web_search(text: str) -> bool:
+    import re
+
+    q = (text or "").lower()
+    keys = (
+        "busca en internet",
+        "busca en la web",
+        "buscar en internet",
+        "buscar en la web",
+        "search the web",
+        "web search",
+        "en internet",
+        "en la web",
+        "noticias de",
+        "googlea",
+        "busca info",
+        "busca información",
+        "qué es ",
+        "que es ",
+        "who is ",
+        "what is ",
+        "ver la web",
+        "mira la web",
+        "revisa la web",
+        "revisa el sitio",
+        "mira el sitio",
+        "abre la web",
+        "abre el sitio",
+        "analiza la web",
+        "analiza el sitio",
+        "visita ",
+        "navega ",
+        "website",
+        "sitio web",
+        "página web",
+        "pagina web",
+        "http://",
+        "https://",
+    )
+    if any(k in q for k in keys):
+        return True
+    # bare domain: allsender.tech / ver allsender.tech
+    if re.search(
+        r"(?i)\b(?:ver|mira|revisa|abre|analiza|visita|check|open|browse)?\s*"
+        r"(?:la\s+web\s+|el\s+sitio\s+|www\.)?"
+        r"[a-z0-9][a-z0-9.-]*\.(?:tech|com|net|org|io|app|ai|co|es|dev|info|me)\b",
+        text or "",
+    ):
+        return True
+    return False
+
+
+def _extract_public_urls(text: str) -> list[str]:
+    """Extract https URLs and bare domains → https://domain for fetch_url."""
+    import re
+
+    found: list[str] = []
+    seen: set[str] = set()
+    for m in re.finditer(r"https?://[^\s<>\"']+", text or "", flags=re.I):
+        u = m.group(0).rstrip(".,);]")
+        if u not in seen:
+            seen.add(u)
+            found.append(u)
+    for m in re.finditer(
+        r"(?i)\b((?:www\.)?[a-z0-9][a-z0-9.-]*\.(?:tech|com|net|org|io|app|ai|co|es|dev|info|me))\b",
+        text or "",
+    ):
+        host = m.group(1).lower()
+        if host.startswith("www."):
+            # prefer apex first (www often has cert mismatch)
+            apex = host[4:]
+            for candidate in (f"https://{apex}", f"https://{host}"):
+                if candidate not in seen:
+                    seen.add(candidate)
+                    found.append(candidate)
+        else:
+            u = f"https://{host}"
+            if u not in seen:
+                seen.add(u)
+                found.append(u)
+    return found[:5]
+
+
+def _clean_web_query(text: str) -> str:
+    """Strip chat-intent prefixes so the search engine gets the real topic."""
+    import re
+
+    q = (text or "").strip()
+    patterns = [
+        r"(?i)^\s*busca(r)?\s+en\s+(la\s+)?(web|internet)\s*[:\-]?\s*",
+        r"(?i)^\s*busca(r)?\s+en\s+google\s*[:\-]?\s*",
+        r"(?i)^\s*search\s+(the\s+)?web\s*(for\s+)?[:\-]?\s*",
+        r"(?i)^\s*googlea\s+",
+        r"(?i)^\s*(ver|mira|revisa|abre|analiza|visita)\s+(la\s+web|el\s+sitio)\s*(de\s+)?",
+        r"(?i)^\s*(ver|mira|revisa|abre|analiza)\s+",
+        r"(?i)^\s*por\s+favor\s+",
+        r"(?i)^\s*puedes\s+",
+        r"(?i)^\s*me\s+puedes\s+",
+        r"[¿?¡!]+",
+    ]
+    for pattern in patterns:
+        q = re.sub(pattern, "", q).strip()
+    # "que es X" / "qué es X" keep the topic with definition intent
+    q = re.sub(r"(?i)^\s*qu[eé]\s+es\s+", "", q).strip() or q
+    return q.strip() or (text or "").strip()
+
+
+def _build_web_site_report(
+    web_prefetch: dict[str, Any] | None,
+    fetch_prefetch: dict[str, Any] | None,
+    user_query: str,
+) -> str:
+    """Ops-style report from real search + page body (no invented content)."""
+    lines: list[str] = [
+        "**Revisión web real** (tools de plataforma, no inventado).",
+        "",
+    ]
+    if user_query:
+        lines.append(f"Pedido: _{user_query.strip()[:200]}_")
+        lines.append("")
+    if fetch_prefetch and not fetch_prefetch.get("error"):
+        url = fetch_prefetch.get("url") or ""
+        text = (fetch_prefetch.get("text") or "").strip()
+        lines.append(f"**Página leída:** {url} (HTTP {fetch_prefetch.get('status_code', '?')})")
+        lines.append("")
+        # short readable summary: first ~800 chars of stripped body
+        preview = " ".join(text.split())
+        lines.append("**Contenido principal (extracto):**")
+        lines.append(preview[:1200] + ("…" if len(preview) > 1200 else ""))
+        lines.append("")
+    elif fetch_prefetch and fetch_prefetch.get("error"):
+        lines.append(f"**Fetch falló:** `{fetch_prefetch.get('error')}`")
+        if fetch_prefetch.get("url"):
+            lines.append(f"URL: {fetch_prefetch.get('url')}")
+        lines.append("")
+    if web_prefetch:
+        count = int(web_prefetch.get("count") or 0)
+        lines.append(f"**Búsqueda web:** {count} resultado(s) para `{web_prefetch.get('query') or ''}`")
+        for item in (web_prefetch.get("results") or [])[:5]:
+            title = (item.get("title") or "").strip() or item.get("url")
+            url = item.get("url") or ""
+            snip = (item.get("snippet") or "").strip()
+            lines.append(f"- [{title}]({url})" + (f" — {snip[:160]}" if snip else ""))
+        if web_prefetch.get("errors"):
+            lines.append(f"_Notas buscador:_ {web_prefetch.get('errors')}")
+        lines.append("")
+    lines.append("Si quieres, profundizo en una sección, precios, login, o comparo con otro sitio.")
+    return "\n".join(lines)
+
+
+def _is_weak_ssh_answer(text: str) -> bool:
+    """True if the model only confirmed login and ignored explore output."""
+    t = (text or "").strip().lower()
+    if not t:
+        return True
+    has_ops = any(
+        k in t
+        for k in (
+            "/www",
+            "wwwroot",
+            "docker",
+            "hostname",
+            "vmi",
+            "disco",
+            "disk",
+            "gb",
+            "nginx",
+            "pm2",
+            "carpeta",
+            "directorio",
+            "contenedor",
+            "ubuntu",
+            "next step",
+            "siguiente",
+            "propongo",
+            "recomiendo",
+        )
+    )
+    confirmish = any(
+        k in t
+        for k in (
+            "confirm",
+            "confirmad",
+            "access confirmed",
+            "acceso confirmado",
+            "password has been",
+            "clave confirmad",
+            "ssh access",
+        )
+    )
+    if confirmish and not has_ops:
+        return True
+    if len(t) < 120 and not has_ops:
+        return True
+    return False
+
+
+def _build_ssh_ops_report(
+    ssh_test: dict[str, Any] | None,
+    ssh_exec: dict[str, Any] | None,
+) -> str:
+    """Deterministic ops-style report from real SSH tool output (no password)."""
+    host = (ssh_test or ssh_exec or {}).get("host") or "?"
+    user = (ssh_test or ssh_exec or {}).get("username") or "root"
+    lines: list[str] = [
+        f"**Acceso SSH OK** a `{host}` como `{user}` (contraseña no se muestra ni se guarda).",
+        "",
+        "Ejecuté exploración remota real (`platform.ssh_test` + `platform.ssh_exec`). Hallazgos:",
+        "",
+    ]
+    test_out = ((ssh_test or {}).get("stdout") or "").strip()
+    if test_out:
+        lines.append("**Identidad del host**")
+        lines.append("```")
+        lines.append(test_out[:900])
+        lines.append("```")
+        lines.append("")
+    exec_out = ((ssh_exec or {}).get("stdout") or "").strip()
+    if exec_out:
+        lines.append("**Exploración del servidor** (hostname, disco, `/`, `/www`, docker)")
+        lines.append("```")
+        lines.append(exec_out[:3500])
+        lines.append("```")
+        lines.append("")
+    elif (ssh_exec or {}).get("error"):
+        lines.append(f"Explore parcialmente falló: `{str(ssh_exec.get('error'))[:200]}`")
+        lines.append("")
+    lines.extend(
+        [
+            "**Próximos pasos** (puedo ejecutarlos con `platform.ssh_exec` si me lo pides):",
+            "1. `ls -la /www/wwwroot` — listar proyectos desplegados",
+            "2. `docker ps -a` / `pm2 list` — ver servicios activos",
+            "3. Revisar nginx o logs de una app concreta (dime el path)",
+            "",
+            "Dime qué quieres hacer en este servidor y lo ejecuto.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _enrich_ssh_final_answer(
+    result: ProviderResult,
+    ssh_prefetch: dict[str, Any] | None,
+    ssh_exec_prefetch: dict[str, Any] | None,
+) -> ProviderResult:
+    """If the model only said 'confirmed', replace with real explore report."""
+    if not ssh_prefetch or not ssh_prefetch.get("ok"):
+        return result
+    if not ssh_exec_prefetch or not (
+        ssh_exec_prefetch.get("stdout") or ssh_exec_prefetch.get("ok")
+    ):
+        return result
+    if not _is_weak_ssh_answer(result.content):
+        return result
+    return ProviderResult(
+        content=_build_ssh_ops_report(ssh_prefetch, ssh_exec_prefetch),
+        model=result.model,
+        provider=result.provider,
+        usage=result.usage,
+    )
+
+
+DEFAULT_AGENT_PROMPT = """You are an operational AI agent on Agents Morf — not a passive FAQ bot.
+You work like Grok Build (xai-org/grok-build): explore, read, search, edit, run commands,
+search the web, SSH into servers when credentials are given, and report REAL tool results.
+
+When SSH_EXEC_PREFETCH or tool results include remote stdout, you MUST:
+1) Confirm access without printing the password.
+2) Summarize what you found (hostname, OS, key folders under /www, docker if any).
+3) Propose 2-3 next concrete actions (e.g. list a project path, check nginx, tail a log).
+Do NOT stop at "access confirmed" — act like a senior ops agent.
+
+Use workspace tools for local sandbox coding. Use platform.ssh_* for remote hosts.
+Never invent file listings. Never print passwords. Reply in the user's language (Spanish if they write Spanish).
+"""
+
+
+@dataclass
+class AgentRunResult:
+    provider_result: ProviderResult
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    memory_hits: int = 0
+    knowledge_hits: int = 0
+    provider_errors: list[str] = field(default_factory=list)
 
 
 async def resolve_agent(
-    db: AsyncSession, organization_id: uuid.UUID, agent_id: uuid.UUID | None
+    db: AsyncSession,
+    organization_id: uuid.UUID,
+    agent_id: uuid.UUID | None,
+    agent_slug: str | None = None,
 ) -> Agent | None:
-    if not agent_id:
+    if not agent_id and not agent_slug:
         return None
-    result = await db.execute(
-        select(Agent).where(
-            Agent.id == agent_id, Agent.organization_id == organization_id, Agent.enabled.is_(True)
-        )
-    )
-    return result.scalar_one_or_none()
+    conditions = [Agent.organization_id == organization_id, Agent.enabled.is_(True)]
+    conditions.append(Agent.id == agent_id if agent_id else Agent.slug == agent_slug)
+    return (await db.execute(select(Agent).where(*conditions))).scalar_one_or_none()
 
 
 async def _provider_configs(
-    db: AsyncSession, organization_id: uuid.UUID, preferred_id: uuid.UUID | None
-):
+    db: AsyncSession,
+    organization_id: uuid.UUID,
+    preferred_provider_id: uuid.UUID | None,
+    *,
+    force_local: bool = False,
+    include_local: bool | None = None,
+) -> list[ProviderConfig]:
+    from app.services.hybrid_router import is_local_kind
+
     stmt = select(Provider).where(
         Provider.organization_id == organization_id, Provider.enabled.is_(True)
     )
-    if preferred_id:
-        stmt = stmt.order_by((Provider.id != preferred_id), Provider.priority)
-    else:
-        stmt = stmt.order_by(Provider.priority)
-    rows = (await db.execute(stmt)).scalars().all()
+    rows = (await db.execute(stmt.order_by(Provider.priority.asc()))).scalars().all()
+    if preferred_provider_id:
+        rows.sort(key=lambda row: 0 if row.id == preferred_provider_id else 1)
     configs = [
         ProviderConfig(
             kind=row.kind,
@@ -43,13 +398,11 @@ async def _provider_configs(
             base_url=row.base_url,
             model=row.model,
             api_key=decrypt_secret(row.encrypted_api_key),
-            settings=row.settings or {},
+            settings=dict(row.settings or {}),
         )
         for row in rows
     ]
-    if configs:
-        return configs
-    # Environment fallback, useful before the first provider is created in the UI.
+
     if settings.openai_api_key:
         configs.append(
             ProviderConfig(
@@ -58,7 +411,6 @@ async def _provider_configs(
                 settings.openai_base_url,
                 settings.openai_model,
                 settings.openai_api_key,
-                {},
             )
         )
     if settings.groq_api_key and settings.groq_model:
@@ -69,7 +421,6 @@ async def _provider_configs(
                 settings.groq_base_url,
                 settings.groq_model,
                 settings.groq_api_key,
-                {},
             )
         )
     if settings.openrouter_api_key and settings.openrouter_model:
@@ -80,7 +431,6 @@ async def _provider_configs(
                 settings.openrouter_base_url,
                 settings.openrouter_model,
                 settings.openrouter_api_key,
-                {},
             )
         )
     if settings.gemini_api_key:
@@ -91,7 +441,6 @@ async def _provider_configs(
                 "https://generativelanguage.googleapis.com",
                 settings.gemini_model,
                 settings.gemini_api_key,
-                {},
             )
         )
     if settings.anthropic_api_key:
@@ -102,44 +451,775 @@ async def _provider_configs(
                 settings.anthropic_base_url,
                 settings.anthropic_model,
                 settings.anthropic_api_key,
-                {},
             )
         )
-    configs.append(
-        ProviderConfig(
-            "ollama", "Ollama", settings.ollama_base_url, settings.ollama_model, None, {}
+    # Ollama is registered only when local chat is explicitly allowed or force_local.
+    allow_local = (
+        force_local
+        or settings.allow_local_chat_fallback
+        or (include_local is True)
+    )
+    if allow_local or include_local is not False:
+        # Always register Ollama for non-chat task paths; chat filters below.
+        configs.append(
+            ProviderConfig(
+                "ollama",
+                "Ollama",
+                settings.ollama_base_url,
+                settings.ollama_model,
+                None,
+                {
+                    "limited_capacity": True,
+                    "chat_allowed": bool(force_local or settings.allow_local_chat_fallback),
+                    "max_parallel": settings.local_max_parallel_inferences,
+                    "cpu_threshold": settings.local_cpu_threshold_percent,
+                    "timeout_seconds": settings.local_inference_timeout_seconds,
+                },
+            )
+        )
+    if settings.grok_build_enabled:
+        configs.append(
+            ProviderConfig(
+                "grok_build",
+                "Grok Build",
+                "",
+                settings.grok_build_model,
+                None,
+                {"binary_path": settings.grok_build_binary, "cwd": settings.grok_build_cwd},
+            )
+        )
+    # Default order for chat: external cloud first, Ollama last (CPU protection)
+    decision = decide(
+        TaskClass.conversation,
+        production_conversation=not force_local,
+        force_local=force_local,
+        force_external=not force_local and not settings.allow_local_chat_fallback,
+        cpu_threshold=settings.local_cpu_threshold_percent,
+    )
+    ordered = order_configs(configs, decision)
+    # Production chat: never fall back to local unless explicitly allowed or forced.
+    if not force_local and not settings.allow_local_chat_fallback:
+        ordered = [c for c in ordered if not is_local_kind(c.kind)]
+    # Prefer Groq when present among external providers (stable primary for Studio).
+    ordered.sort(
+        key=lambda c: (
+            0 if c.name.lower() == "groq" else 1,
+            0 if "groq" in (c.base_url or "").lower() else 1,
         )
     )
-    return configs
+    return ordered
+
+
+async def _training_context(
+    db: AsyncSession, organization_id: uuid.UUID, agent_id: uuid.UUID
+) -> str:
+    examples = (
+        (
+            await db.execute(
+                select(TrainingExample)
+                .where(
+                    TrainingExample.organization_id == organization_id,
+                    TrainingExample.agent_id == agent_id,
+                    TrainingExample.enabled.is_(True),
+                )
+                .order_by(TrainingExample.weight.desc(), TrainingExample.created_at.desc())
+                .limit(settings.training_max_examples)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not examples:
+        return ""
+    blocks = ["Approved behavioral examples. Follow the pattern, not the literal customer data:"]
+    for example in examples:
+        block = f"USER: {example.input_text}\nASSISTANT: {example.expected_output}"
+        if example.context:
+            block = f"CONTEXT: {example.context}\n{block}"
+        blocks.append(block)
+    return "\n\n".join(blocks)
+
+
+async def _complete_with_fallback(
+    configs: list[ProviderConfig],
+    messages: list[dict[str, Any]],
+    temperature: float,
+    max_tokens: int,
+    requested_model: str | None,
+) -> tuple[ProviderResult, list[str]]:
+    errors: list[str] = []
+    for original in configs:
+        config = ProviderConfig(**original.__dict__)
+        if requested_model:
+            config.model = requested_model
+        try:
+            return await complete(config, messages, temperature, max_tokens), errors
+        except ProviderError as exc:
+            errors.append(str(exc))
+    raise ProviderError("All providers failed: " + " | ".join(errors))
 
 
 async def run_agent(
     db: AsyncSession,
     organization_id: uuid.UUID,
     agent: Agent | None,
-    messages: list[dict],
+    messages: list[dict[str, Any]],
     requested_model: str | None,
     requested_temperature: float | None,
     requested_max_tokens: int | None,
-) -> ProviderResult:
-    system_prompt = agent.system_prompt if agent else DEFAULT_SALES_PROMPT
-    final_messages = [{"role": "system", "content": system_prompt}] + [
-        m for m in messages if m["role"] != "system"
-    ]
-    configs = await _provider_configs(db, organization_id, agent.provider_id if agent else None)
-    errors = []
-    for config in configs:
-        if requested_model:
-            config.model = requested_model
+    *,
+    conversation_id: uuid.UUID | None = None,
+    end_user_id: str | None = None,
+    force_local: bool = False,
+    runtime: str = "api",
+) -> AgentRunResult:
+    """runtime=studio: execute platform tools + demo client tools and continue.
+    runtime=api: return client tool_calls for the caller's backend (no fake success).
+    """
+    studio = runtime == "studio"
+    system_prompt = agent.system_prompt if agent else DEFAULT_AGENT_PROMPT
+    instructions = agent.instructions if agent else ""
+    user_query = next(
+        (message["content"] for message in reversed(messages) if message["role"] == "user"), ""
+    )
+
+    memory_items = []
+    knowledge_chunks = []
+    tools = []
+    training_context = ""
+    if agent:
+        if agent.memory_enabled and user_query:
+            memory_items = await search_memory(
+                db,
+                organization_id,
+                user_query,
+                agent_id=agent.id,
+                conversation_id=conversation_id,
+                end_user_id=end_user_id,
+                limit=agent.memory_top_k,
+            )
+        if agent.knowledge_enabled and user_query:
+            knowledge_chunks = await search_knowledge(
+                db, organization_id, agent.id, user_query, limit=6
+            )
+        tools = await tools_for_agent(db, organization_id, agent.id)
+        training_context = await _training_context(db, organization_id, agent.id)
+
+    client_tool_names = [t.name for t in tools]
+    builtin_names = {d["name"] for d in builtin_tool_definitions()}
+    workspace_names = workspace_tool_names() if studio else set()
+    ops_prompt = format_builtin_tools_prompt(client_tool_names)
+    if studio:
+        ops_prompt += "\n\n" + format_workspace_tools_prompt()
+        ops_prompt += (
+            "\n\nRUNTIME: studio (Agents Morf dashboard / Morf Terminal). "
+            "You MUST use tools when useful — like Grok Build. "
+            "Workspace tools (read_file, list_dir, grep, search_replace, run_terminal_cmd) "
+            "EXECUTE FOR REAL in a sandbox. "
+            "Client business tools (sales.*, restaurant.*, …) get DEMO results unless mapped "
+            "to workspace. Label business demos clearly. "
+            "If WEB_SEARCH_PREFETCH is present below, use it as already-fetched web results. "
+            "Start coding tasks with list_dir then read_file."
+        )
+    else:
+        ops_prompt += (
+            "\n\nRUNTIME: api. Client tools are NOT executed here — emit tool_call JSON and stop "
+            "until the caller posts tool-results. Platform web/knowledge tools still available."
+        )
+
+    # Proactive web search + page fetch when user asks about internet / a domain (studio).
+    web_prefetch: dict[str, Any] | None = None
+    fetch_prefetch: dict[str, Any] | None = None
+    web_query = _clean_web_query(user_query) if user_query else ""
+    public_urls = _extract_public_urls(user_query) if user_query else []
+    wants_web = bool(
+        user_query
+        and studio
+        and settings.web_search_enabled
+        and (_wants_web_search(user_query) or public_urls)
+    )
+    if wants_web:
         try:
-            return await complete(
-                config,
-                final_messages,
-                requested_temperature
-                if requested_temperature is not None
-                else float(agent.temperature if agent else Decimal("0.3")),
-                requested_max_tokens or (agent.max_tokens if agent else 1200),
+            web_prefetch = await web_search(web_query or user_query, settings.web_search_max_results)
+            # Retry with a shorter topic if first pass empty
+            if not (web_prefetch or {}).get("count") and web_query and web_query != user_query:
+                web_prefetch = await web_search(web_query, settings.web_search_max_results)
+            # Domain-like query with 0 search hits → still attach the domain as a result
+            if web_prefetch is not None and not web_prefetch.get("count") and public_urls:
+                web_prefetch["results"] = [
+                    {
+                        "title": public_urls[0],
+                        "url": public_urls[0],
+                        "snippet": "Dominio detectado en el mensaje; leyendo la página con fetch_url.",
+                        "source": "domain_from_user_message",
+                    }
+                ]
+                web_prefetch["count"] = 1
+                web_prefetch["providers"] = list(web_prefetch.get("providers") or []) + [
+                    "domain_direct"
+                ]
+            if web_prefetch is not None:
+                web_prefetch["original_user_message"] = user_query
+                web_prefetch["cleaned_query"] = web_query
+        except Exception as exc:  # noqa: BLE001
+            web_prefetch = {"error": str(exc), "query": web_query or user_query, "results": []}
+
+        # Always try to read the page body for domains/URLs (Grok-like browse).
+        if settings.web_fetch_enabled and public_urls:
+            # Common typo: allender.tech → allsender.tech
+            candidates = list(public_urls)
+            for url in list(public_urls):
+                fixed = url.replace("allender.", "allsender.").replace("Allender.", "allsender.")
+                if fixed != url and fixed not in candidates:
+                    candidates.append(fixed)
+            last_err: dict[str, Any] | None = None
+            for url in candidates:
+                try:
+                    page = await fetch_public_url(url)
+                except Exception as exc:  # noqa: BLE001
+                    page = {"error": str(exc), "url": url}
+                if page and not page.get("error") and (page.get("text") or "").strip():
+                    fetch_prefetch = page
+                    if url not in public_urls:
+                        fetch_prefetch = {
+                            **page,
+                            "note": f"URL corregida automáticamente (typo) → {url}",
+                        }
+                    break
+                last_err = page
+            if fetch_prefetch is None and last_err is not None:
+                fetch_prefetch = last_err
+
+    # Proactive SSH: test + explore remote (Grok-like) when user pastes credentials.
+    ssh_prefetch: dict[str, Any] | None = None
+    ssh_exec_prefetch: dict[str, Any] | None = None
+    ssh_hint = parse_ssh_hint_from_user_text(user_query) if studio and user_query else None
+    if studio and settings.workspace_ssh_enabled and ssh_hint:
+        try:
+            ssh_prefetch = execute_ssh_tool("platform.ssh_test", ssh_hint)
+            # If login works, immediately explore the server (agent must use this output).
+            if ssh_prefetch.get("ok"):
+                # Keep command simple (no nested quotes) for remote sh -c compatibility.
+                explore_cmd = (
+                    "echo '=== HOST ==='; hostname; whoami; pwd; "
+                    "echo '=== OS ==='; uname -a; "
+                    "echo '=== DISK ==='; df -h | head -12; "
+                    "echo '=== ROOT ==='; ls -la / | head -25; "
+                    "echo '=== WWW ==='; ls -la /www 2>/dev/null | head -20; "
+                    "echo '=== WWWROOT ==='; ls -la /www/wwwroot 2>/dev/null | head -25; "
+                    "echo '=== DOCKER ==='; docker ps 2>/dev/null | head -20 || true"
+                )
+                ssh_exec_prefetch = execute_ssh_tool(
+                    "platform.ssh_exec",
+                    {
+                        "host": ssh_hint["host"],
+                        "username": ssh_hint["username"],
+                        "password": ssh_hint["password"],
+                        "command": explore_cmd,
+                    },
+                )
+        except Exception as exc:  # noqa: BLE001
+            ssh_prefetch = {"ok": False, "error": str(exc), "host": ssh_hint.get("host")}
+
+    context_sections = [
+        section
+        for section in [
+            system_prompt.strip(),
+            instructions.strip(),
+            ops_prompt,
+            training_context,
+            format_memory_context(memory_items),
+            format_knowledge_context(knowledge_chunks),
+            format_tools_prompt(tools) if tools else "",
+            (
+                "WEB_SEARCH_PREFETCH (already executed by Agents Morf — cite sources):\n"
+                + json.dumps(web_prefetch, ensure_ascii=False)[:6000]
+                if web_prefetch
+                else ""
+            ),
+            (
+                "WEB_FETCH_PREFETCH (REAL page body already fetched — summarize the site for the user):\n"
+                + json.dumps(
+                    {
+                        "url": (fetch_prefetch or {}).get("url"),
+                        "status_code": (fetch_prefetch or {}).get("status_code"),
+                        "error": (fetch_prefetch or {}).get("error"),
+                        "text": ((fetch_prefetch or {}).get("text") or "")[:4500],
+                        "truncated": (fetch_prefetch or {}).get("truncated"),
+                    },
+                    ensure_ascii=False,
+                )
+                if fetch_prefetch
+                else ""
+            ),
+            (
+                "SSH_TEST_PREFETCH (already executed — do NOT print the password):\n"
+                + json.dumps(ssh_prefetch, ensure_ascii=False)[:2500]
+                if ssh_prefetch
+                else ""
+            ),
+            (
+                "SSH_EXEC_PREFETCH (REAL remote shell output — summarize like Grok Build: what you found "
+                "on the server, key dirs, services; suggest next ssh_exec commands):\n"
+                + json.dumps(ssh_exec_prefetch, ensure_ascii=False)[:8000]
+                if ssh_exec_prefetch
+                else ""
+            ),
+        ]
+        if section
+    ]
+    final_messages: list[dict[str, Any]] = [
+        {"role": "system", "content": "\n\n---\n\n".join(context_sections)}
+    ] + [
+        {
+            "role": m["role"] if m.get("role") in {"user", "assistant", "system"} else "user",
+            "content": m.get("content") or "",
+        }
+        for m in messages
+        if m.get("role") != "system"
+    ]
+
+    configs = await _provider_configs(
+        db,
+        organization_id,
+        agent.provider_id if agent else None,
+        force_local=force_local,
+    )
+    if not configs:
+        raise ProviderError(
+            "No external providers available for conversation. "
+            "Configure GROQ_API_KEY (or another cloud provider). "
+            "Local Ollama is not used for production chat."
+        )
+    temperature = (
+        requested_temperature
+        if requested_temperature is not None
+        else float(agent.temperature if agent else Decimal("0.3"))
+    )
+    max_tokens = requested_max_tokens or (agent.max_tokens if agent else 1200)
+    tool_calls: list[dict[str, Any]] = []
+    all_errors: list[str] = []
+    max_rounds = settings.tool_max_rounds + (2 if studio else 0)
+    if web_prefetch is not None:
+        tool_calls.append(
+            {
+                "id": f"call_prefetch_{uuid.uuid4().hex[:12]}",
+                "name": "platform.web_search",
+                "arguments": {"query": web_query or user_query},
+                "execution_mode": "server",
+                "requires_approval": False,
+                "status": "success" if web_prefetch.get("count") else "failed",
+                "reason": "prefetch_on_web_intent",
+                "simulated": False,
+            }
+        )
+    if fetch_prefetch is not None:
+        tool_calls.append(
+            {
+                "id": f"call_fetch_{uuid.uuid4().hex[:10]}",
+                "name": "platform.fetch_url",
+                "arguments": {"url": (fetch_prefetch or {}).get("url") or (public_urls[0] if public_urls else "")},
+                "execution_mode": "server",
+                "requires_approval": False,
+                "status": "success" if not fetch_prefetch.get("error") else "failed",
+                "reason": "prefetch_page_body_on_domain",
+                "simulated": False,
+            }
+        )
+    if ssh_prefetch is not None:
+        tool_calls.append(
+            {
+                "id": f"call_ssh_prefetch_{uuid.uuid4().hex[:10]}",
+                "name": "platform.ssh_test",
+                "arguments": {
+                    "host": (ssh_hint or {}).get("host"),
+                    "username": (ssh_hint or {}).get("username"),
+                    "password": "***",
+                },
+                "execution_mode": "server",
+                "requires_approval": False,
+                "status": "success" if ssh_prefetch.get("ok") else "failed",
+                "reason": "prefetch_on_ssh_intent",
+                "simulated": False,
+            }
+        )
+    if ssh_exec_prefetch is not None:
+        tool_calls.append(
+            {
+                "id": f"call_ssh_exec_{uuid.uuid4().hex[:10]}",
+                "name": "platform.ssh_exec",
+                "arguments": {
+                    "host": (ssh_hint or {}).get("host"),
+                    "username": (ssh_hint or {}).get("username"),
+                    "password": "***",
+                    "command": "explore: hostname, disk, /www, docker",
+                },
+                "execution_mode": "server",
+                "requires_approval": False,
+                "status": "success" if ssh_exec_prefetch.get("ok") else "failed",
+                "reason": "auto_explore_remote_after_login",
+                "simulated": False,
+            }
+        )
+
+    # Pure "ssh user@host pass" pastes: return real ops report immediately (no weak LLM lag).
+    if (
+        studio
+        and ssh_prefetch
+        and ssh_prefetch.get("ok")
+        and ssh_exec_prefetch
+        and (ssh_exec_prefetch.get("stdout") or ssh_exec_prefetch.get("ok"))
+        and user_query
+    ):
+        import re as _re
+
+        pure_ssh = bool(
+            _re.match(
+                r"(?i)^\s*(entra\s+(aqui|aquí)\s+)?ssh\s+\S+@\S+(\s+\S+){0,6}\s*$",
+                user_query.strip(),
+            )
+        )
+        if pure_ssh:
+            report = _build_ssh_ops_report(ssh_prefetch, ssh_exec_prefetch)
+            return AgentRunResult(
+                provider_result=ProviderResult(
+                    content=report,
+                    model="agents-morf-ops",
+                    provider="platform",
+                    usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                ),
+                tool_calls=tool_calls,
+                memory_hits=len(memory_items),
+                knowledge_hits=len(knowledge_chunks),
+                provider_errors=all_errors,
+            )
+
+    # Pure "ver allsender.tech" / site browse: return real page report if fetch worked.
+    if (
+        studio
+        and user_query
+        and fetch_prefetch
+        and not fetch_prefetch.get("error")
+        and (fetch_prefetch.get("text") or "").strip()
+        and not ssh_hint
+    ):
+        import re as _re
+
+        pure_web = bool(
+            _re.match(
+                r"(?i)^\s*(ver|mira|revisa|abre|analiza|visita|check|browse|lee)?\s*"
+                r"(la\s+web\s+|el\s+sitio\s+|la\s+página\s+|la\s+pagina\s+)?(de\s+)?"
+                r"(https?://\S+|(?:www\.)?[a-z0-9][a-z0-9.-]*\.(?:tech|com|net|org|io|app|ai|co|es|dev|info|me))"
+                r"\s*[.!?]*\s*$",
+                user_query.strip(),
+            )
+        )
+        if pure_web:
+            report = _build_web_site_report(web_prefetch, fetch_prefetch, user_query)
+            return AgentRunResult(
+                provider_result=ProviderResult(
+                    content=report,
+                    model="agents-morf-web",
+                    provider="platform",
+                    usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                ),
+                tool_calls=tool_calls,
+                memory_hits=len(memory_items),
+                knowledge_hits=len(knowledge_chunks),
+                provider_errors=all_errors,
+            )
+
+    def _fallback_from_prefetch(extra_errors: list[str] | None = None) -> AgentRunResult | None:
+        """If LLM/provider dies but we already fetched real data, still answer the user."""
+        errs = list(all_errors)
+        if extra_errors:
+            errs.extend(extra_errors)
+        if (
+            fetch_prefetch
+            and not fetch_prefetch.get("error")
+            and (fetch_prefetch.get("text") or "").strip()
+        ):
+            return AgentRunResult(
+                provider_result=ProviderResult(
+                    content=_build_web_site_report(web_prefetch, fetch_prefetch, user_query or ""),
+                    model="agents-morf-web",
+                    provider="platform",
+                    usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                ),
+                tool_calls=tool_calls,
+                memory_hits=len(memory_items),
+                knowledge_hits=len(knowledge_chunks),
+                provider_errors=errs,
+            )
+        if (
+            ssh_prefetch
+            and ssh_prefetch.get("ok")
+            and ssh_exec_prefetch
+            and (ssh_exec_prefetch.get("stdout") or ssh_exec_prefetch.get("ok"))
+        ):
+            return AgentRunResult(
+                provider_result=ProviderResult(
+                    content=_build_ssh_ops_report(ssh_prefetch, ssh_exec_prefetch),
+                    model="agents-morf-ops",
+                    provider="platform",
+                    usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                ),
+                tool_calls=tool_calls,
+                memory_hits=len(memory_items),
+                knowledge_hits=len(knowledge_chunks),
+                provider_errors=errs,
+            )
+        return None
+
+    for _round_index in range(max_rounds + 1):
+        try:
+            result, errors = await _complete_with_fallback(
+                configs, final_messages, temperature, max_tokens, requested_model
             )
         except ProviderError as exc:
-            errors.append(str(exc))
-    raise ProviderError("All providers failed: " + " | ".join(errors))
+            fb = _fallback_from_prefetch([str(exc)])
+            if fb is not None:
+                return fb
+            raise
+        all_errors.extend(errors)
+        parsed = parse_tool_call(result.content)
+        if not parsed:
+            # Weak models often stop at "SSH confirmed"; upgrade to real explore report.
+            final_result = _enrich_ssh_final_answer(
+                result, ssh_prefetch, ssh_exec_prefetch
+            )
+            # If web browse and model ignored page body, use real extract.
+            if (
+                fetch_prefetch
+                and not fetch_prefetch.get("error")
+                and (fetch_prefetch.get("text") or "").strip()
+                and len((final_result.content or "").strip()) < 80
+            ):
+                final_result = ProviderResult(
+                    content=_build_web_site_report(web_prefetch, fetch_prefetch, user_query or ""),
+                    model=final_result.model,
+                    provider=final_result.provider,
+                    usage=final_result.usage,
+                )
+            return AgentRunResult(
+                provider_result=final_result,
+                tool_calls=tool_calls,
+                memory_hits=len(memory_items),
+                knowledge_hits=len(knowledge_chunks),
+                provider_errors=all_errors,
+            )
+
+        # --- Grok Build-style workspace tools (studio sandbox, real execution) ---
+        if studio and parsed.name in workspace_names:
+            call = {
+                "id": f"call_{uuid.uuid4().hex}",
+                "name": resolve_canonical_tool(parsed.name) or parsed.name,
+                "arguments": parsed.arguments,
+                "execution_mode": "server",
+                "requires_approval": False,
+                "status": "running",
+                "reason": parsed.reason,
+            }
+            tool_calls.append(call)
+            try:
+                payload = execute_workspace_tool(
+                    organization_id=organization_id,
+                    agent_id=agent.id if agent else None,
+                    name=parsed.name,
+                    arguments=parsed.arguments,
+                )
+                call["status"] = "failed" if payload.get("error") else "success"
+            except Exception as exc:  # noqa: BLE001
+                payload = {"error": str(exc)}
+                call["status"] = "failed"
+            _append_tool_exchange(
+                final_messages,
+                assistant_text=result.content,
+                tool_name=call["name"],
+                status=call["status"],
+                payload=payload if isinstance(payload, dict) else {"value": payload},
+                call_id=call["id"],
+            )
+            continue
+
+        # --- Built-in platform tools (always executable) ---
+        if parsed.name in builtin_names:
+            call = {
+                "id": f"call_{uuid.uuid4().hex}",
+                "name": parsed.name,
+                "arguments": parsed.arguments,
+                "execution_mode": "server",
+                "requires_approval": False,
+                "status": "running",
+                "reason": parsed.reason,
+            }
+            tool_calls.append(call)
+            try:
+                payload = await execute_builtin_tool(
+                    db,
+                    organization_id=organization_id,
+                    agent_id=agent.id if agent else None,
+                    conversation_id=conversation_id,
+                    end_user_id=end_user_id,
+                    name=parsed.name,
+                    arguments=parsed.arguments,
+                    client_tool_names=client_tool_names,
+                )
+                call["status"] = "success"
+            except Exception as exc:  # noqa: BLE001
+                payload = {"error": str(exc)}
+                call["status"] = "failed"
+            _append_tool_exchange(
+                final_messages,
+                assistant_text=result.content,
+                tool_name=parsed.name,
+                status=call["status"],
+                payload=payload if isinstance(payload, dict) else {"value": payload},
+                call_id=call["id"],
+            )
+            continue
+
+        tool = next((candidate for candidate in tools if candidate.name == parsed.name), None)
+        if not tool:
+            _append_tool_exchange(
+                final_messages,
+                assistant_text=result.content,
+                tool_name=parsed.name,
+                status="failed",
+                payload={"error": f"Unknown or disabled tool: {parsed.name}"},
+                call_id=f"call_{uuid.uuid4().hex}",
+            )
+            continue
+
+        call = {
+            "id": f"call_{uuid.uuid4().hex}",
+            "name": tool.name,
+            "arguments": parsed.arguments,
+            "execution_mode": tool.execution_mode,
+            "requires_approval": tool.requires_approval,
+            "status": "pending",
+            "reason": parsed.reason,
+        }
+        tool_calls.append(call)
+
+        is_client = tool.execution_mode == "client" or tool.transport == "client"
+        may_server_execute = bool(
+            agent
+            and agent.auto_tool_execution
+            and tool.execution_mode == "server"
+            and (agent.tool_approval_mode == "always" or not tool.requires_approval)
+        )
+
+        # API mode: hand tool_calls back to the customer backend (no fake success).
+        if is_client and not studio:
+            return AgentRunResult(
+                provider_result=ProviderResult(
+                    content="",
+                    model=result.model,
+                    provider=result.provider,
+                    usage=result.usage,
+                ),
+                tool_calls=tool_calls,
+                memory_hits=len(memory_items),
+                knowledge_hits=len(knowledge_chunks),
+                provider_errors=all_errors,
+            )
+
+        # Studio: map programming tools to real workspace, else demo business tools.
+        if is_client and studio:
+            if resolve_canonical_tool(tool.name):
+                try:
+                    payload = execute_workspace_tool(
+                        organization_id=organization_id,
+                        agent_id=agent.id if agent else None,
+                        name=tool.name,
+                        arguments=parsed.arguments,
+                    )
+                    call["status"] = "failed" if payload.get("error") else "success"
+                    call["execution_mode"] = "server"
+                    call["simulated"] = False
+                except Exception as exc:  # noqa: BLE001
+                    payload = {"error": str(exc)}
+                    call["status"] = "failed"
+                _append_tool_exchange(
+                    final_messages,
+                    assistant_text=result.content,
+                    tool_name=tool.name,
+                    status=call["status"],
+                    payload=payload if isinstance(payload, dict) else {"value": payload},
+                    call_id=call["id"],
+                )
+                continue
+            demo = simulate_client_tool_result(tool.name, parsed.arguments)
+            call["status"] = "simulated"
+            call["simulated"] = True
+            _append_tool_exchange(
+                final_messages,
+                assistant_text=result.content,
+                tool_name=tool.name,
+                status="success",
+                payload=demo,
+                call_id=call["id"],
+            )
+            continue
+
+        if not may_server_execute:
+            # Server tool but not auto-approved — in studio still try HTTP if configured.
+            if not studio:
+                return AgentRunResult(
+                    provider_result=ProviderResult(
+                        content="",
+                        model=result.model,
+                        provider=result.provider,
+                        usage=result.usage,
+                    ),
+                    tool_calls=tool_calls,
+                    memory_hits=len(memory_items),
+                    knowledge_hits=len(knowledge_chunks),
+                    provider_errors=all_errors,
+                )
+
+        execution = await execute_tool(
+            db,
+            organization_id=organization_id,
+            agent_id=agent.id if agent else None,
+            conversation_id=conversation_id,
+            tool=tool,
+            arguments=parsed.arguments,
+        )
+        call["status"] = execution.status
+        _append_tool_exchange(
+            final_messages,
+            assistant_text=result.content,
+            tool_name=tool.name,
+            status=execution.status,
+            payload={
+                "result": execution.result,
+                "error": execution.error,
+            },
+            call_id=call["id"],
+        )
+        if execution.status != "completed":
+            if studio:
+                # Keep going with the failure payload so the model can explain.
+                continue
+            return AgentRunResult(
+                provider_result=ProviderResult(
+                    content=(
+                        "The requested action could not be confirmed. The calling platform should "
+                        "review the tool execution result."
+                    ),
+                    model=result.model,
+                    provider=result.provider,
+                    usage=result.usage,
+                ),
+                tool_calls=tool_calls,
+                memory_hits=len(memory_items),
+                knowledge_hits=len(knowledge_chunks),
+                provider_errors=all_errors,
+            )
+
+    fb = _fallback_from_prefetch(["Agent exceeded the maximum number of tool rounds"])
+    if fb is not None:
+        return fb
+    raise ProviderError("Agent exceeded the maximum number of tool rounds")

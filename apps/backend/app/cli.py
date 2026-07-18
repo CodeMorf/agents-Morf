@@ -39,20 +39,42 @@ async def _create_admin(email: str, password: str, organization: str):
         )
         db.add(user)
         await db.flush()
-        db.add(Membership(organization_id=org.id, user_id=user.id, role=Role.organization_owner))
+        db.add(Membership(organization_id=org.id, user_id=user.id, role=Role.super_admin))
         await db.commit()
         typer.echo(f"Created administrator {email} for organization {organization} ({org.id})")
 
 
 @app.command("create-admin")
 def create_admin(
-    email: str = typer.Option(...),
-    password: str = typer.Option(...),
-    organization: str = typer.Option("CodeMorf"),
+    email: str = typer.Option(..., "--email"),
+    password: str = typer.Option(..., "--password"),
+    organization: str = typer.Option("CodeMorf", "--organization"),
 ):
+    """Create the first platform administrator (superuser)."""
     if len(password) < 12:
         raise typer.BadParameter("Password must contain at least 12 characters")
     asyncio.run(_create_admin(email, password, organization))
+
+
+@app.command("seed-agent-templates")
+def seed_agent_templates():
+    """Idempotently seed the ten official agent templates."""
+
+    async def _run():
+        await create_schema()
+        from app.services.templates_seed import seed_agent_templates as seed
+
+        async with SessionLocal() as db:
+            summary = await seed(db)
+        return summary
+
+    summary = asyncio.run(_run())
+    typer.echo(
+        f"Templates seed: created={summary['created']} updated={summary['updated']} "
+        f"skipped={summary['skipped']} official={summary['total_official']}"
+    )
+    for line in summary.get("details") or []:
+        typer.echo(f"  - {line}")
 
 
 if __name__ == "__main__":

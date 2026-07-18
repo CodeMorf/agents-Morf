@@ -1,36 +1,63 @@
 # Project status
 
-## Verified in this package
+Version: **0.2.0 development / staging candidate**  
+Branch: **`architecture-v0.2`**  
+Public domain: **https://agent.codemorf.tech**  
+Docs index: **[docs/README.md](docs/README.md)**
 
-- Python source compiles.
-- Backend Ruff checks pass.
-- Backend health test passes with SQLite.
-- React/Vite TypeScript production build passes.
-- No real SMTP2GO or AI-provider secret is included.
+---
 
-## Implemented foundation
+## Implemented and verified
 
-- Authentication with access and refresh JWTs
-- Administrator bootstrap command
-- Organizations, memberships and roles
-- Tenant isolation through `X-Organization-ID`
-- Agent and provider CRUD foundation
-- Provider gateway and fallback sequence
-- OpenAI-compatible, Gemini, Anthropic-compatible and Ollama adapters
-- Sales leads, reservations, menu items, orders and call jobs
-- Conversation and message persistence
-- OpenAI-style chat completion API with SSE response mode
-- SMTP2GO test email endpoint
-- React/Vite command center
-- Docker Compose, Nginx, health checks and CI
+### Core platform
 
-## Requires configuration or further provider work
+- FastAPI + React/Vite multi-tenant control plane  
+- Organization isolation, dashboard JWTs, scoped API keys  
+- Provider routing (Groq-first hybrid) + fallback  
+- OpenAI-compatible, Gemini, Anthropic, optional Grok Build binary  
+- Versioned agents + Agent Builder + 10 official templates  
+- Scoped memory (Postgres + Qdrant + lexical fallback)  
+- Knowledge bases / document upload / chunking  
+- Behavioral training datasets, examples, evaluation  
+- Feedback + reviewed promote to training  
+- Generic client/server tools + tool-results continuation  
+- Docker Compose phase1 staging (`agentsmorfv02`) + host SSL  
 
-- Real phone calls require Twilio, Telnyx, Vonage or another telephony adapter and credentials.
-- Real calendar bookings require a Google Calendar, Microsoft 365 or CalDAV adapter.
-- Payments require a payment-provider adapter and merchant credentials.
-- WhatsApp/SMS require an approved channel provider.
-- Qdrant is included as infrastructure; document ingestion and embedding pipelines are on the roadmap.
-- Production deployments should introduce Alembic migrations before schema evolution begins.
+### Studio / Terminal (Grok-like ops)
 
-The package is an executable MVP and professional foundation, not a claim that every third-party business integration works without credentials or provider-specific implementation.
+- **Morf Terminal** `/terminal` with inspector, tool pills, 90s abort  
+- `runtime=studio` vs `runtime=api` ([docs/STUDIO_RUNTIME.md](docs/STUDIO_RUNTIME.md))  
+- Workspace tools: list/read/grep/edit/allowlisted shell  
+- Platform web search + HTTPS fetch (domain prefetch, allsender typo)  
+- Controlled SSH test + explore (`platform.ssh_*`)  
+- Deterministic ops/web reports when LLM is weak or 502  
+- Client Tool Simulator (mock tool-results only)  
+
+### Documentation (expanded)
+
+- [docs/README.md](docs/README.md) index  
+- Terminal, Platform tools, Studio runtime, Ops runbook  
+- Architecture, API, Deployment, Security, Grok parity updated  
+
+---
+
+## Before “full public production”
+
+- [ ] Alembic migrations validated before first schema upgrade  
+- [ ] `TOOL_ALLOWED_HOSTS` + egress firewall  
+- [ ] Load tests: concurrency, queues, provider fallback  
+- [ ] Backups, monitoring, log retention  
+- [ ] Independent security review (SSH/web surface)  
+- [ ] Frontend rebuild pipeline into `shared/frontend_dist` documented in CI  
+
+---
+
+## Ops reminder
+
+Host code ≠ running image. After Python changes:
+
+```bash
+docker compose -p agentsmorfv02 … build --no-cache backend && up -d backend
+```
+
+See [docs/OPS_RUNBOOK.md](docs/OPS_RUNBOOK.md).
