@@ -19,6 +19,7 @@ from app.services.providers import ProviderConfig, ProviderError, ProviderResult
 from app.services.builtin_tools import (
     builtin_tool_definitions,
     execute_builtin_tool,
+    fetch_public_url,
     format_builtin_tools_prompt,
     simulate_client_tool_result,
     web_search,
@@ -76,6 +77,8 @@ def _append_tool_exchange(
 
 
 def _wants_web_search(text: str) -> bool:
+    import re
+
     q = (text or "").lower()
     keys = (
         "busca en internet",
@@ -94,8 +97,66 @@ def _wants_web_search(text: str) -> bool:
         "que es ",
         "who is ",
         "what is ",
+        "ver la web",
+        "mira la web",
+        "revisa la web",
+        "revisa el sitio",
+        "mira el sitio",
+        "abre la web",
+        "abre el sitio",
+        "analiza la web",
+        "analiza el sitio",
+        "visita ",
+        "navega ",
+        "website",
+        "sitio web",
+        "página web",
+        "pagina web",
+        "http://",
+        "https://",
     )
-    return any(k in q for k in keys)
+    if any(k in q for k in keys):
+        return True
+    # bare domain: allsender.tech / ver allsender.tech
+    if re.search(
+        r"(?i)\b(?:ver|mira|revisa|abre|analiza|visita|check|open|browse)?\s*"
+        r"(?:la\s+web\s+|el\s+sitio\s+|www\.)?"
+        r"[a-z0-9][a-z0-9.-]*\.(?:tech|com|net|org|io|app|ai|co|es|dev|info|me)\b",
+        text or "",
+    ):
+        return True
+    return False
+
+
+def _extract_public_urls(text: str) -> list[str]:
+    """Extract https URLs and bare domains → https://domain for fetch_url."""
+    import re
+
+    found: list[str] = []
+    seen: set[str] = set()
+    for m in re.finditer(r"https?://[^\s<>\"']+", text or "", flags=re.I):
+        u = m.group(0).rstrip(".,);]")
+        if u not in seen:
+            seen.add(u)
+            found.append(u)
+    for m in re.finditer(
+        r"(?i)\b((?:www\.)?[a-z0-9][a-z0-9.-]*\.(?:tech|com|net|org|io|app|ai|co|es|dev|info|me))\b",
+        text or "",
+    ):
+        host = m.group(1).lower()
+        if host.startswith("www."):
+            # prefer apex first (www often has cert mismatch)
+            apex = host[4:]
+            for candidate in (f"https://{apex}", f"https://{host}"):
+                if candidate not in seen:
+                    seen.add(candidate)
+                    found.append(candidate)
+        else:
+            u = f"https://{host}"
+            if u not in seen:
+                seen.add(u)
+                found.append(u)
+    return found[:5]
 
 
 def _clean_web_query(text: str) -> str:
@@ -108,6 +169,8 @@ def _clean_web_query(text: str) -> str:
         r"(?i)^\s*busca(r)?\s+en\s+google\s*[:\-]?\s*",
         r"(?i)^\s*search\s+(the\s+)?web\s*(for\s+)?[:\-]?\s*",
         r"(?i)^\s*googlea\s+",
+        r"(?i)^\s*(ver|mira|revisa|abre|analiza|visita)\s+(la\s+web|el\s+sitio)\s*(de\s+)?",
+        r"(?i)^\s*(ver|mira|revisa|abre|analiza)\s+",
         r"(?i)^\s*por\s+favor\s+",
         r"(?i)^\s*puedes\s+",
         r"(?i)^\s*me\s+puedes\s+",
@@ -118,6 +181,49 @@ def _clean_web_query(text: str) -> str:
     # "que es X" / "qué es X" keep the topic with definition intent
     q = re.sub(r"(?i)^\s*qu[eé]\s+es\s+", "", q).strip() or q
     return q.strip() or (text or "").strip()
+
+
+def _build_web_site_report(
+    web_prefetch: dict[str, Any] | None,
+    fetch_prefetch: dict[str, Any] | None,
+    user_query: str,
+) -> str:
+    """Ops-style report from real search + page body (no invented content)."""
+    lines: list[str] = [
+        "**Revisión web real** (tools de plataforma, no inventado).",
+        "",
+    ]
+    if user_query:
+        lines.append(f"Pedido: _{user_query.strip()[:200]}_")
+        lines.append("")
+    if fetch_prefetch and not fetch_prefetch.get("error"):
+        url = fetch_prefetch.get("url") or ""
+        text = (fetch_prefetch.get("text") or "").strip()
+        lines.append(f"**Página leída:** {url} (HTTP {fetch_prefetch.get('status_code', '?')})")
+        lines.append("")
+        # short readable summary: first ~800 chars of stripped body
+        preview = " ".join(text.split())
+        lines.append("**Contenido principal (extracto):**")
+        lines.append(preview[:1200] + ("…" if len(preview) > 1200 else ""))
+        lines.append("")
+    elif fetch_prefetch and fetch_prefetch.get("error"):
+        lines.append(f"**Fetch falló:** `{fetch_prefetch.get('error')}`")
+        if fetch_prefetch.get("url"):
+            lines.append(f"URL: {fetch_prefetch.get('url')}")
+        lines.append("")
+    if web_prefetch:
+        count = int(web_prefetch.get("count") or 0)
+        lines.append(f"**Búsqueda web:** {count} resultado(s) para `{web_prefetch.get('query') or ''}`")
+        for item in (web_prefetch.get("results") or [])[:5]:
+            title = (item.get("title") or "").strip() or item.get("url")
+            url = item.get("url") or ""
+            snip = (item.get("snippet") or "").strip()
+            lines.append(f"- [{title}]({url})" + (f" — {snip[:160]}" if snip else ""))
+        if web_prefetch.get("errors"):
+            lines.append(f"_Notas buscador:_ {web_prefetch.get('errors')}")
+        lines.append("")
+    lines.append("Si quieres, profundizo en una sección, precios, login, o comparo con otro sitio.")
+    return "\n".join(lines)
 
 
 def _is_weak_ssh_answer(text: str) -> bool:
@@ -521,20 +627,68 @@ async def run_agent(
             "until the caller posts tool-results. Platform web/knowledge tools still available."
         )
 
-    # Proactive web search when the user clearly asks for internet (all agents, studio).
+    # Proactive web search + page fetch when user asks about internet / a domain (studio).
     web_prefetch: dict[str, Any] | None = None
+    fetch_prefetch: dict[str, Any] | None = None
     web_query = _clean_web_query(user_query) if user_query else ""
-    if studio and settings.web_search_enabled and user_query and _wants_web_search(user_query):
+    public_urls = _extract_public_urls(user_query) if user_query else []
+    wants_web = bool(
+        user_query
+        and studio
+        and settings.web_search_enabled
+        and (_wants_web_search(user_query) or public_urls)
+    )
+    if wants_web:
         try:
             web_prefetch = await web_search(web_query or user_query, settings.web_search_max_results)
             # Retry with a shorter topic if first pass empty
             if not (web_prefetch or {}).get("count") and web_query and web_query != user_query:
                 web_prefetch = await web_search(web_query, settings.web_search_max_results)
+            # Domain-like query with 0 search hits → still attach the domain as a result
+            if web_prefetch is not None and not web_prefetch.get("count") and public_urls:
+                web_prefetch["results"] = [
+                    {
+                        "title": public_urls[0],
+                        "url": public_urls[0],
+                        "snippet": "Dominio detectado en el mensaje; leyendo la página con fetch_url.",
+                        "source": "domain_from_user_message",
+                    }
+                ]
+                web_prefetch["count"] = 1
+                web_prefetch["providers"] = list(web_prefetch.get("providers") or []) + [
+                    "domain_direct"
+                ]
             if web_prefetch is not None:
                 web_prefetch["original_user_message"] = user_query
                 web_prefetch["cleaned_query"] = web_query
         except Exception as exc:  # noqa: BLE001
             web_prefetch = {"error": str(exc), "query": web_query or user_query, "results": []}
+
+        # Always try to read the page body for domains/URLs (Grok-like browse).
+        if settings.web_fetch_enabled and public_urls:
+            # Common typo: allender.tech → allsender.tech
+            candidates = list(public_urls)
+            for url in list(public_urls):
+                fixed = url.replace("allender.", "allsender.").replace("Allender.", "allsender.")
+                if fixed != url and fixed not in candidates:
+                    candidates.append(fixed)
+            last_err: dict[str, Any] | None = None
+            for url in candidates:
+                try:
+                    page = await fetch_public_url(url)
+                except Exception as exc:  # noqa: BLE001
+                    page = {"error": str(exc), "url": url}
+                if page and not page.get("error") and (page.get("text") or "").strip():
+                    fetch_prefetch = page
+                    if url not in public_urls:
+                        fetch_prefetch = {
+                            **page,
+                            "note": f"URL corregida automáticamente (typo) → {url}",
+                        }
+                    break
+                last_err = page
+            if fetch_prefetch is None and last_err is not None:
+                fetch_prefetch = last_err
 
     # Proactive SSH: test + explore remote (Grok-like) when user pastes credentials.
     ssh_prefetch: dict[str, Any] | None = None
@@ -581,6 +735,21 @@ async def run_agent(
                 "WEB_SEARCH_PREFETCH (already executed by Agents Morf — cite sources):\n"
                 + json.dumps(web_prefetch, ensure_ascii=False)[:6000]
                 if web_prefetch
+                else ""
+            ),
+            (
+                "WEB_FETCH_PREFETCH (REAL page body already fetched — summarize the site for the user):\n"
+                + json.dumps(
+                    {
+                        "url": (fetch_prefetch or {}).get("url"),
+                        "status_code": (fetch_prefetch or {}).get("status_code"),
+                        "error": (fetch_prefetch or {}).get("error"),
+                        "text": ((fetch_prefetch or {}).get("text") or "")[:4500],
+                        "truncated": (fetch_prefetch or {}).get("truncated"),
+                    },
+                    ensure_ascii=False,
+                )
+                if fetch_prefetch
                 else ""
             ),
             (
@@ -641,6 +810,19 @@ async def run_agent(
                 "requires_approval": False,
                 "status": "success" if web_prefetch.get("count") else "failed",
                 "reason": "prefetch_on_web_intent",
+                "simulated": False,
+            }
+        )
+    if fetch_prefetch is not None:
+        tool_calls.append(
+            {
+                "id": f"call_fetch_{uuid.uuid4().hex[:10]}",
+                "name": "platform.fetch_url",
+                "arguments": {"url": (fetch_prefetch or {}).get("url") or (public_urls[0] if public_urls else "")},
+                "execution_mode": "server",
+                "requires_approval": False,
+                "status": "success" if not fetch_prefetch.get("error") else "failed",
+                "reason": "prefetch_page_body_on_domain",
                 "simulated": False,
             }
         )
@@ -712,10 +894,93 @@ async def run_agent(
                 provider_errors=all_errors,
             )
 
-    for _round_index in range(max_rounds + 1):
-        result, errors = await _complete_with_fallback(
-            configs, final_messages, temperature, max_tokens, requested_model
+    # Pure "ver allsender.tech" / site browse: return real page report if fetch worked.
+    if (
+        studio
+        and user_query
+        and fetch_prefetch
+        and not fetch_prefetch.get("error")
+        and (fetch_prefetch.get("text") or "").strip()
+        and not ssh_hint
+    ):
+        import re as _re
+
+        pure_web = bool(
+            _re.match(
+                r"(?i)^\s*(ver|mira|revisa|abre|analiza|visita|check|browse|lee)?\s*"
+                r"(la\s+web\s+|el\s+sitio\s+|la\s+página\s+|la\s+pagina\s+)?(de\s+)?"
+                r"(https?://\S+|(?:www\.)?[a-z0-9][a-z0-9.-]*\.(?:tech|com|net|org|io|app|ai|co|es|dev|info|me))"
+                r"\s*[.!?]*\s*$",
+                user_query.strip(),
+            )
         )
+        if pure_web:
+            report = _build_web_site_report(web_prefetch, fetch_prefetch, user_query)
+            return AgentRunResult(
+                provider_result=ProviderResult(
+                    content=report,
+                    model="agents-morf-web",
+                    provider="platform",
+                    usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                ),
+                tool_calls=tool_calls,
+                memory_hits=len(memory_items),
+                knowledge_hits=len(knowledge_chunks),
+                provider_errors=all_errors,
+            )
+
+    def _fallback_from_prefetch(extra_errors: list[str] | None = None) -> AgentRunResult | None:
+        """If LLM/provider dies but we already fetched real data, still answer the user."""
+        errs = list(all_errors)
+        if extra_errors:
+            errs.extend(extra_errors)
+        if (
+            fetch_prefetch
+            and not fetch_prefetch.get("error")
+            and (fetch_prefetch.get("text") or "").strip()
+        ):
+            return AgentRunResult(
+                provider_result=ProviderResult(
+                    content=_build_web_site_report(web_prefetch, fetch_prefetch, user_query or ""),
+                    model="agents-morf-web",
+                    provider="platform",
+                    usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                ),
+                tool_calls=tool_calls,
+                memory_hits=len(memory_items),
+                knowledge_hits=len(knowledge_chunks),
+                provider_errors=errs,
+            )
+        if (
+            ssh_prefetch
+            and ssh_prefetch.get("ok")
+            and ssh_exec_prefetch
+            and (ssh_exec_prefetch.get("stdout") or ssh_exec_prefetch.get("ok"))
+        ):
+            return AgentRunResult(
+                provider_result=ProviderResult(
+                    content=_build_ssh_ops_report(ssh_prefetch, ssh_exec_prefetch),
+                    model="agents-morf-ops",
+                    provider="platform",
+                    usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                ),
+                tool_calls=tool_calls,
+                memory_hits=len(memory_items),
+                knowledge_hits=len(knowledge_chunks),
+                provider_errors=errs,
+            )
+        return None
+
+    for _round_index in range(max_rounds + 1):
+        try:
+            result, errors = await _complete_with_fallback(
+                configs, final_messages, temperature, max_tokens, requested_model
+            )
+        except ProviderError as exc:
+            fb = _fallback_from_prefetch([str(exc)])
+            if fb is not None:
+                return fb
+            raise
         all_errors.extend(errors)
         parsed = parse_tool_call(result.content)
         if not parsed:
@@ -723,6 +988,19 @@ async def run_agent(
             final_result = _enrich_ssh_final_answer(
                 result, ssh_prefetch, ssh_exec_prefetch
             )
+            # If web browse and model ignored page body, use real extract.
+            if (
+                fetch_prefetch
+                and not fetch_prefetch.get("error")
+                and (fetch_prefetch.get("text") or "").strip()
+                and len((final_result.content or "").strip()) < 80
+            ):
+                final_result = ProviderResult(
+                    content=_build_web_site_report(web_prefetch, fetch_prefetch, user_query or ""),
+                    model=final_result.model,
+                    provider=final_result.provider,
+                    usage=final_result.usage,
+                )
             return AgentRunResult(
                 provider_result=final_result,
                 tool_calls=tool_calls,
@@ -941,4 +1219,7 @@ async def run_agent(
                 provider_errors=all_errors,
             )
 
+    fb = _fallback_from_prefetch(["Agent exceeded the maximum number of tool rounds"])
+    if fb is not None:
+        return fb
     raise ProviderError("Agent exceeded the maximum number of tool rounds")

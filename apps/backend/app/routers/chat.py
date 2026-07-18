@@ -160,7 +160,11 @@ async def chat_completions(
             runtime=runtime,
         )
     except ProviderError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        detail = (str(exc) or "").strip() or (
+            "El proveedor de modelo (Groq u otro) no respondió. "
+            "Reintenta en unos segundos; si persiste, revisa GROQ_API_KEY / cuota."
+        )
+        raise HTTPException(status_code=502, detail=detail) from exc
     latency_ms = int((time.perf_counter() - started) * 1000)
     fallback_used = bool(run.provider_errors)
     usage_status = "fallback" if fallback_used else "success"

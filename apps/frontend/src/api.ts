@@ -37,7 +37,8 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
       message = (detail as { message?: string }).message || JSON.stringify(detail)
     }
     if (response.status === 502 || response.status === 503) {
-      message = `${message} (API temporalmente no disponible — reintenta en 10s)`
+      const base = (message || '').trim() || `HTTP ${response.status}`
+      message = `${base} — el modelo o la API falló temporalmente. Reintenta en 10s (Ctrl+F5 si persiste).`
     }
     throw new Error(message)
   }
