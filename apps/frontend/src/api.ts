@@ -9,11 +9,21 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   if (!(options.body instanceof FormData)) headers.set('Content-Type', 'application/json')
   if (token) headers.set('Authorization', `Bearer ${token}`)
   if (organizationId) headers.set('X-Organization-ID', organizationId)
-  const response = await fetch(`${API_BASE}${path}`, { ...options, headers })
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE}${path}`, { ...options, headers })
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') throw err
+    throw new Error(
+      err instanceof Error
+        ? `Sin conexión a la API (${err.message}). ¿Backend caído o 502?`
+        : 'Sin conexión a la API',
+    )
+  }
   if (!response.ok) {
     const body = await response.json().catch(() => ({ detail: response.statusText }))
     const detail = body.detail ?? body.message
-    let message = 'Request failed'
+    let message = `HTTP ${response.status}`
     if (typeof detail === 'string') {
       message = detail
     } else if (Array.isArray(detail)) {
@@ -25,6 +35,9 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
         .join(' · ')
     } else if (detail && typeof detail === 'object') {
       message = (detail as { message?: string }).message || JSON.stringify(detail)
+    }
+    if (response.status === 502 || response.status === 503) {
+      message = `${message} (API temporalmente no disponible — reintenta en 10s)`
     }
     throw new Error(message)
   }

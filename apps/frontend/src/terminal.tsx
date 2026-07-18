@@ -67,11 +67,16 @@ export function TerminalPage() {
   const send = useMutation({
     mutationFn: async () => {
       setError('')
+      if (!activeAgentId) {
+        throw new Error('Selecciona un agente a la izquierda antes de enviar.')
+      }
+      const userText = input.trim()
+      if (!userText) throw new Error('Escribe un mensaje.')
       const messages = [
         ...history
           .filter(m => m.role === 'user' || m.role === 'assistant')
           .map(m => ({ role: m.role, content: m.content })),
-        { role: 'user' as const, content: input },
+        { role: 'user' as const, content: userText },
       ]
       const body = {
         agent_id: activeAgentId || undefined,
@@ -85,20 +90,38 @@ export function TerminalPage() {
       }
       setLastRequest(body)
       pushLog(`POST /chat/completions agent=${selectedAgent?.slug || activeAgentId}`)
-      return api<ChatResponse>('/chat/completions', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      })
+      // Abort after 90s so the UI never stays on "Enviando…" forever
+      const controller = new AbortController()
+      const timer = window.setTimeout(() => controller.abort(), 90_000)
+      try {
+        return await api<ChatResponse>('/chat/completions', {
+          method: 'POST',
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        })
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') {
+          throw new Error('Timeout 90s: la API no respondió. Revisa backend/Groq e intenta de nuevo.')
+        }
+        throw err
+      } finally {
+        window.clearTimeout(timer)
+      }
     },
     onSuccess: result => {
       const answer = result.choices[0]?.message
       const tools = answer?.tool_calls || []
+      const content =
+        answer?.content?.trim() ||
+        (tools.length
+          ? `Acciones: ${tools.map(t => `${t.name} (${t.status || 'ok'})`).join(', ')}`
+          : '(sin texto del modelo)')
       setHistory(current => [
         ...current,
         { role: 'user', content: input },
         {
           role: 'assistant',
-          content: answer?.content || (tools.length ? `[tool_calls: ${tools.map(t => t.name).join(', ')}]` : ''),
+          content,
           tool_calls: tools,
         },
       ])
@@ -118,11 +141,21 @@ export function TerminalPage() {
         finish_reason: result.choices[0]?.finish_reason,
         tool_rounds: tools.length,
       })
-      pushLog(`finish_reason=${result.choices[0]?.finish_reason} tools=${tools.length} provider=${result.provider}`)
+      pushLog(
+        `OK finish=${result.choices[0]?.finish_reason} tools=${tools.map(t => t.name).join(',') || '-'} provider=${result.provider} ${result.latency_ms ?? ''}ms`,
+      )
     },
     onError: (err: Error) => {
-      setError(err.message)
-      pushLog(`ERROR ${err.message}`)
+      const msg = err.message || 'Error al enviar'
+      setError(msg)
+      pushLog(`ERROR ${msg}`)
+      // still show the user message so the thread is not empty
+      setHistory(current => [
+        ...current,
+        { role: 'user', content: input },
+        { role: 'assistant', content: `⚠️ Error: ${msg}` },
+      ])
+      setInput('')
     },
   })
 
@@ -320,7 +353,14 @@ print(r.json())`
             {history.length === 0 && (
               <div className="empty">
                 <TerminalSquare size={36} />
-                <p>Envía un mensaje para iniciar. Si el agente devuelve tool_calls, simúlalos a la derecha sin ejecutar operaciones reales.</p>
+                <p>
+                  <b>Usa solo este panel en agent.codemorf.tech</b> (no abras el HTML de Downloads — es un mockup sin API).
+                </p>
+                <p className="muted">
+                  Ejemplo SSH: <code>ssh root@86.48.20.221 Gaia1234</code>
+                  <br />
+                  Ejemplo workspace: <code>lista el workspace y lee README.md</code>
+                </p>
               </div>
             )}
             {history.map((m, i) => (

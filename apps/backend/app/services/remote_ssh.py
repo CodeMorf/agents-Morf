@@ -188,26 +188,57 @@ def execute_ssh_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def parse_ssh_hint_from_user_text(text: str) -> dict[str, str] | None:
-    """Extract host/user/password from casual Spanish/English SSH prompts."""
+    """Extract host/user/password from casual Spanish/English SSH prompts.
+
+    Accepts:
+      ssh root@86.48.20.221 Clave Gaia1234
+      entra aqui ssh root@86.48.20.221 Gaia1234
+      ssh root@host password: secret
+    """
     if not text:
         return None
     host = None
     user = "root"
     password = None
-    m = re.search(r"(?i)\bssh\s+([A-Za-z0-9_.-]+)@([A-Za-z0-9.-]+)", text)
+    rest_after_ssh = ""
+
+    m = re.search(
+        r"(?i)\bssh\s+([A-Za-z0-9_.-]+)@([A-Za-z0-9.-]+)(?:\s+(.+))?$",
+        text.strip(),
+    )
     if m:
         user, host = m.group(1), m.group(2)
+        rest_after_ssh = (m.group(3) or "").strip()
     else:
         m2 = re.search(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b", text)
         if m2:
             host = m2.group(1)
+            # text after IP
+            rest_after_ssh = text[m2.end() :].strip()
+
     m3 = re.search(r"(?i)(?:clave|password|pass|pwd)\s*[:=]?\s*(\S+)", text)
     if m3:
-        password = m3.group(1).strip(".,;")
-    # bare "Clave XXX" pattern from UI
-    m4 = re.search(r"(?i)\bClave\s+(\S+)", text)
-    if m4 and not password:
-        password = m4.group(1).strip(".,;?")
+        password = m3.group(1).strip(".,;?\"'")
+    if not password and rest_after_ssh:
+        # strip leading labels then take first token as password
+        cleaned = re.sub(
+            r"(?i)^(clave|password|pass|pwd)\s*[:=]?\s*",
+            "",
+            rest_after_ssh,
+        ).strip()
+        # ignore trailing spanish filler words
+        cleaned = re.sub(
+            r"(?i)\s+(puede|entrar|please|ahora|ya|por\s+favor).*$",
+            "",
+            cleaned,
+        ).strip()
+        tok = cleaned.split()[0] if cleaned.split() else ""
+        if tok and tok.lower() not in {"puede", "entrar", "ssh", "root", "por", "favor"}:
+            password = tok.strip(".,;?\"'")
+
     if host and password:
         return {"host": host, "username": user, "password": password}
+    if host and not password:
+        # still return host so agent can ask for password, but prefetch needs both
+        return None
     return None
