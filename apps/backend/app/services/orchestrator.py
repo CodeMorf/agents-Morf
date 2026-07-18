@@ -119,6 +119,119 @@ def _clean_web_query(text: str) -> str:
     q = re.sub(r"(?i)^\s*qu[eé]\s+es\s+", "", q).strip() or q
     return q.strip() or (text or "").strip()
 
+
+def _is_weak_ssh_answer(text: str) -> bool:
+    """True if the model only confirmed login and ignored explore output."""
+    t = (text or "").strip().lower()
+    if not t:
+        return True
+    has_ops = any(
+        k in t
+        for k in (
+            "/www",
+            "wwwroot",
+            "docker",
+            "hostname",
+            "vmi",
+            "disco",
+            "disk",
+            "gb",
+            "nginx",
+            "pm2",
+            "carpeta",
+            "directorio",
+            "contenedor",
+            "ubuntu",
+            "next step",
+            "siguiente",
+            "propongo",
+            "recomiendo",
+        )
+    )
+    confirmish = any(
+        k in t
+        for k in (
+            "confirm",
+            "confirmad",
+            "access confirmed",
+            "acceso confirmado",
+            "password has been",
+            "clave confirmad",
+            "ssh access",
+        )
+    )
+    if confirmish and not has_ops:
+        return True
+    if len(t) < 120 and not has_ops:
+        return True
+    return False
+
+
+def _build_ssh_ops_report(
+    ssh_test: dict[str, Any] | None,
+    ssh_exec: dict[str, Any] | None,
+) -> str:
+    """Deterministic ops-style report from real SSH tool output (no password)."""
+    host = (ssh_test or ssh_exec or {}).get("host") or "?"
+    user = (ssh_test or ssh_exec or {}).get("username") or "root"
+    lines: list[str] = [
+        f"**Acceso SSH OK** a `{host}` como `{user}` (contraseña no se muestra ni se guarda).",
+        "",
+        "Ejecuté exploración remota real (`platform.ssh_test` + `platform.ssh_exec`). Hallazgos:",
+        "",
+    ]
+    test_out = ((ssh_test or {}).get("stdout") or "").strip()
+    if test_out:
+        lines.append("**Identidad del host**")
+        lines.append("```")
+        lines.append(test_out[:900])
+        lines.append("```")
+        lines.append("")
+    exec_out = ((ssh_exec or {}).get("stdout") or "").strip()
+    if exec_out:
+        lines.append("**Exploración del servidor** (hostname, disco, `/`, `/www`, docker)")
+        lines.append("```")
+        lines.append(exec_out[:3500])
+        lines.append("```")
+        lines.append("")
+    elif (ssh_exec or {}).get("error"):
+        lines.append(f"Explore parcialmente falló: `{str(ssh_exec.get('error'))[:200]}`")
+        lines.append("")
+    lines.extend(
+        [
+            "**Próximos pasos** (puedo ejecutarlos con `platform.ssh_exec` si me lo pides):",
+            "1. `ls -la /www/wwwroot` — listar proyectos desplegados",
+            "2. `docker ps -a` / `pm2 list` — ver servicios activos",
+            "3. Revisar nginx o logs de una app concreta (dime el path)",
+            "",
+            "Dime qué quieres hacer en este servidor y lo ejecuto.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _enrich_ssh_final_answer(
+    result: ProviderResult,
+    ssh_prefetch: dict[str, Any] | None,
+    ssh_exec_prefetch: dict[str, Any] | None,
+) -> ProviderResult:
+    """If the model only said 'confirmed', replace with real explore report."""
+    if not ssh_prefetch or not ssh_prefetch.get("ok"):
+        return result
+    if not ssh_exec_prefetch or not (
+        ssh_exec_prefetch.get("stdout") or ssh_exec_prefetch.get("ok")
+    ):
+        return result
+    if not _is_weak_ssh_answer(result.content):
+        return result
+    return ProviderResult(
+        content=_build_ssh_ops_report(ssh_prefetch, ssh_exec_prefetch),
+        model=result.model,
+        provider=result.provider,
+        usage=result.usage,
+    )
+
+
 DEFAULT_AGENT_PROMPT = """You are an operational AI agent on Agents Morf — not a passive FAQ bot.
 You work like Grok Build (xai-org/grok-build): explore, read, search, edit, run commands,
 search the web, SSH into servers when credentials are given, and report REAL tool results.
@@ -567,6 +680,38 @@ async def run_agent(
             }
         )
 
+    # Pure "ssh user@host pass" pastes: return real ops report immediately (no weak LLM lag).
+    if (
+        studio
+        and ssh_prefetch
+        and ssh_prefetch.get("ok")
+        and ssh_exec_prefetch
+        and (ssh_exec_prefetch.get("stdout") or ssh_exec_prefetch.get("ok"))
+        and user_query
+    ):
+        import re as _re
+
+        pure_ssh = bool(
+            _re.match(
+                r"(?i)^\s*(entra\s+(aqui|aquí)\s+)?ssh\s+\S+@\S+(\s+\S+){0,6}\s*$",
+                user_query.strip(),
+            )
+        )
+        if pure_ssh:
+            report = _build_ssh_ops_report(ssh_prefetch, ssh_exec_prefetch)
+            return AgentRunResult(
+                provider_result=ProviderResult(
+                    content=report,
+                    model="agents-morf-ops",
+                    provider="platform",
+                    usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                ),
+                tool_calls=tool_calls,
+                memory_hits=len(memory_items),
+                knowledge_hits=len(knowledge_chunks),
+                provider_errors=all_errors,
+            )
+
     for _round_index in range(max_rounds + 1):
         result, errors = await _complete_with_fallback(
             configs, final_messages, temperature, max_tokens, requested_model
@@ -574,8 +719,12 @@ async def run_agent(
         all_errors.extend(errors)
         parsed = parse_tool_call(result.content)
         if not parsed:
+            # Weak models often stop at "SSH confirmed"; upgrade to real explore report.
+            final_result = _enrich_ssh_final_answer(
+                result, ssh_prefetch, ssh_exec_prefetch
+            )
             return AgentRunResult(
-                provider_result=result,
+                provider_result=final_result,
                 tool_calls=tool_calls,
                 memory_hits=len(memory_items),
                 knowledge_hits=len(knowledge_chunks),
