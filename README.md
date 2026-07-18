@@ -7,7 +7,7 @@
 
 **Agents Morf** is a provider-neutral, multi-tenant platform for creating, training, operating and exposing autonomous AI agents through a robust API and web Studio.
 
-[Architecture](docs/ARCHITECTURE.md) · [Training & memory](docs/TRAINING_AND_MEMORY.md) · [API](docs/API.md) · [Deployment](docs/DEPLOYMENT.md) · [Security](docs/SECURITY.md) · [Grok Build integration](docs/GROK_BUILD_INTEGRATION.md)
+[Docs index](docs/README.md) · [Architecture](docs/ARCHITECTURE.md) · [Terminal](docs/AGENTS_MORF_TERMINAL.md) · [Platform tools](docs/PLATFORM_TOOLS.md) · [API](docs/API.md) · [Deployment](docs/DEPLOYMENT.md) · [Ops runbook](docs/OPS_RUNBOOK.md) · [Security](docs/SECURITY.md) · [Grok parity](docs/GROK_BUILD_AGENT_PARITY.md)
 </div>
 
 ---

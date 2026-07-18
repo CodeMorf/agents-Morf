@@ -2,73 +2,154 @@
 
 ## Purpose
 
-Agents Morf is a centralized AI agent control plane deployed on `agent.codemorf.tech`. Other products consume it through API keys and keep their own operational databases and integrations.
+Agents Morf is a **multi-tenant AI agent control plane** (domain: `agent.codemorf.tech`).  
+Other products (AllSender, EcoMarket, restaurant, …) consume it through API keys and keep their **own** operational databases.
+
+It is **not** a free shell host, not a payment engine, and not a monorepo of every CodeMorf product backend.
+
+---
+
+## High-level components
+
+```text
+┌──────────────┐     JWT      ┌─────────────────────┐
+│ React Studio │─────────────►│ FastAPI /api/v1     │
+│ Terminal/Chat│              │ orchestrator        │
+└──────────────┘              │  · memory / RAG     │
+                              │  · hybrid router    │
+┌──────────────┐   am_ key    │  · tool loop        │
+│ Product BE   │─────────────►│  · studio | api     │
+└──────────────┘              └──────────┬──────────┘
+                                         │
+              ┌──────────────┬───────────┼───────────┬────────────┐
+              ▼              ▼           ▼           ▼            ▼
+         PostgreSQL       Redis       Qdrant     Providers    Sandbox
+         tenants,         jobs,       vectors    Groq/…       workspaces/
+         agents, msgs     queue                              storage/
+```
+
+| Layer | Tech |
+|-------|------|
+| API | Python 3.12, FastAPI, SQLAlchemy async |
+| UI | React + Vite + TypeScript |
+| DB | PostgreSQL 16 |
+| Cache/jobs | Redis 7 |
+| Vectors | Qdrant |
+| LLM | Groq-first (OpenAI-compatible), fallbacks configurables |
+| Edge | Docker nginx `:18080` + host aaPanel SSL → dominio |
+
+---
 
 ## Runtime request flow
 
-1. Authenticate a dashboard user or external API key.
-2. Resolve the organization and agent.
-3. Load the published agent configuration.
-4. Retrieve scoped memory for the agent, end user and conversation.
-5. Retrieve approved knowledge chunks linked to the agent.
-6. Inject curated behavioral training examples.
-7. Load the tools linked to the agent.
-8. Choose the preferred provider and fallback order.
-9. Generate a response or a structured tool request.
-10. Execute an approved server tool, or return a client tool call to the product backend.
-11. Persist messages and usage.
-12. Queue safe memory extraction.
+1. Authenticate dashboard user (JWT) or external API key.  
+2. Resolve organization + agent (slug or id).  
+3. Load draft/published agent config (prompt, tools, temperature).  
+4. Retrieve scoped **memory** (org / agent / end_user / conversation).  
+5. Retrieve approved **knowledge** chunks.  
+6. Inject curated **training** examples.  
+7. Load tool definitions (builtin + agent tools).  
+8. **Prefetch** (studio): web / fetch_url / SSH if the user message matches.  
+9. Hybrid router → provider order (Groq, …).  
+10. LLM complete; parse text `tool_call` protocol (compatible with providers that reject bare `role=tool`).  
+11. Execute allowed tools (studio sandbox / platform) or return client tools (api).  
+12. Persist messages + usage; queue memory extraction (worker).  
+
+Código central: `apps/backend/app/services/orchestrator.py` · `routers/chat.py`.
+
+---
 
 ## Product boundary
 
-Agents Morf does not contain restaurant, email, calendar, order or payment engines. Those services expose tool contracts to the agent platform.
-
-Example:
-
 ```text
-Restaurant customer
+Restaurant / AllSender customer
        │
-Restaurant backend / channel adapter
-       │  POST /chat/completions
+Product backend / channel adapter
+       │  POST /chat/completions  (runtime=api)
        ▼
-Agents Morf
-       │  tool call: restaurant.check_availability
+Agents Morf  →  reason + memory + RAG
+       │  tool_call: restaurant.check_availability
        ▼
-Restaurant backend executes against its own database
-       │  tool result
+Product backend executes against its DB
+       │  POST /tool-results
        ▼
-Agents Morf creates the customer-facing answer
+Agents Morf  →  customer-facing answer
 ```
+
+Agents Morf **never** claims success for a business action without a confirmed tool result.
+
+---
+
+## Runtimes
+
+| Runtime | Who | Tools |
+|---------|-----|--------|
+| **studio** | Dashboard + Terminal | Platform tools real; business tools **demo** |
+| **api** | Product API keys | Business tools → client; no unrestricted host shell |
+
+See [STUDIO_RUNTIME.md](./STUDIO_RUNTIME.md).
+
+---
 
 ## Memory
 
-PostgreSQL is the source of truth. Qdrant stores semantic vectors when embedding services are available. Retrieval combines semantic results with a lexical fallback.
+- **PostgreSQL** is source of truth.  
+- **Qdrant** holds embeddings when available; lexical fallback if not.  
+- Scopes: `organization`, `agent`, `end_user`, `conversation`.  
+- Worker extracts durable memories; instructed to skip passwords/tokens/PII payment data.
 
-Scopes:
-
-- organization: shared rules and facts;
-- agent: agent-specific context;
-- end_user: durable facts tied to the external caller's stable user ID;
-- conversation: context limited to one conversation.
+---
 
 ## Training
 
-Behavior is assembled from versioned instructions, training examples, knowledge and memory. Training examples are few-shot examples injected into the prompt. Evaluation runs compare actual answers with expected answers.
+“Training” = controlled behavior configuration, not silent weight fine-tuning:
 
-## Tools
+1. System prompt + instructions  
+2. Immutable published versions  
+3. Few-shot examples  
+4. Knowledge bases  
+5. Durable memory  
+6. Evaluation runs  
 
-Tools are generic contracts:
+Feedback → review → promote to training examples only.
 
-- `client`: return the call to the caller for execution;
-- `server`: call a protected HTTPS API from Agents Morf.
+---
 
-The caller remains the system of record. Every tool call has an execution status and audit trail.
+## Tools model
 
-## Grok Build
+| Mode | Meaning |
+|------|---------|
+| `client` | Return call to product backend |
+| `server` | Agents Morf calls HTTPS endpoint (encrypted secrets) |
+| Platform / workspace | Built-in; studio execution only where flagged |
 
-Grok Build remains an independent program. The optional adapter launches its installed binary using restricted headless mode. The upstream Rust source is not modified and the provider is disabled by default.
+Platform catalog: [PLATFORM_TOOLS.md](./PLATFORM_TOOLS.md).
 
+---
 
-## Learning loop
+## Grok Build relationship
 
-Feedback is stored separately from training data. Only reviewed corrections are promoted into behavioral examples, preventing silent learning from untrusted customer input.
+- **Parity goal:** same *kinds* of tools in Studio (read/list/grep/edit/shell/web/SSH).  
+- **Not** a fork of the Rust TUI into SaaS.  
+- Optional binary adapter remains separate (`GROK_BUILD_ENABLED`).  
+
+See [GROK_BUILD_AGENT_PARITY.md](./GROK_BUILD_AGENT_PARITY.md).
+
+---
+
+## Multi-tenant rules
+
+- Every row filtered by `organization_id`.  
+- API keys bound to one org.  
+- Workspaces isolated by org+agent.  
+- Super-admin only for force-local Ollama, etc.
+
+---
+
+## Related
+
+- [API.md](./API.md)  
+- [DEPLOYMENT.md](./DEPLOYMENT.md)  
+- [OPS_RUNBOOK.md](./OPS_RUNBOOK.md)  
+- [SECURITY.md](./SECURITY.md)  
+- [AGENTS_MORF_TERMINAL.md](./AGENTS_MORF_TERMINAL.md)  

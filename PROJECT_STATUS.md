@@ -1,28 +1,63 @@
 # Project status
 
-Version: **0.2.0 development candidate**
+Version: **0.2.0 development / staging candidate**  
+Branch: **`architecture-v0.2`**  
+Public domain: **https://agent.codemorf.tech**  
+Docs index: **[docs/README.md](docs/README.md)**
 
-Implemented and verified:
+---
 
-- FastAPI and React/Vite applications;
-- organization isolation, dashboard JWTs and scoped external API keys;
-- provider routing and fallback;
-- Ollama, OpenAI-compatible, Gemini, Anthropic and restricted Grok Build adapters;
-- versioned agents;
-- scoped memory with PostgreSQL source of truth, Qdrant semantic index and lexical fallback;
-- safe automatic memory extraction worker;
-- knowledge bases, text ingestion and document chunking;
-- behavioral training datasets, examples and evaluation runs;
-- human feedback collection and reviewed correction promotion;
-- generic tool registry, JSON Schema validation, client/server execution modes and SSRF controls;
-- Studio, API documentation, Docker Compose and Nginx;
-- backend lint/tests and frontend production build.
+## Implemented and verified
 
-Before public production:
+### Core platform
 
-- add and validate Alembic migrations before the first schema upgrade;
-- configure `TOOL_ALLOWED_HOSTS` and production egress firewall rules;
-- complete concurrency, queue and provider-fallback load tests;
-- configure real providers, backups, monitoring and retention policies;
-- validate Cloudflare and origin TLS;
-- complete an independent security review.
+- FastAPI + React/Vite multi-tenant control plane  
+- Organization isolation, dashboard JWTs, scoped API keys  
+- Provider routing (Groq-first hybrid) + fallback  
+- OpenAI-compatible, Gemini, Anthropic, optional Grok Build binary  
+- Versioned agents + Agent Builder + 10 official templates  
+- Scoped memory (Postgres + Qdrant + lexical fallback)  
+- Knowledge bases / document upload / chunking  
+- Behavioral training datasets, examples, evaluation  
+- Feedback + reviewed promote to training  
+- Generic client/server tools + tool-results continuation  
+- Docker Compose phase1 staging (`agentsmorfv02`) + host SSL  
+
+### Studio / Terminal (Grok-like ops)
+
+- **Morf Terminal** `/terminal` with inspector, tool pills, 90s abort  
+- `runtime=studio` vs `runtime=api` ([docs/STUDIO_RUNTIME.md](docs/STUDIO_RUNTIME.md))  
+- Workspace tools: list/read/grep/edit/allowlisted shell  
+- Platform web search + HTTPS fetch (domain prefetch, allsender typo)  
+- Controlled SSH test + explore (`platform.ssh_*`)  
+- Deterministic ops/web reports when LLM is weak or 502  
+- Client Tool Simulator (mock tool-results only)  
+
+### Documentation (expanded)
+
+- [docs/README.md](docs/README.md) index  
+- Terminal, Platform tools, Studio runtime, Ops runbook  
+- Architecture, API, Deployment, Security, Grok parity updated  
+
+---
+
+## Before “full public production”
+
+- [ ] Alembic migrations validated before first schema upgrade  
+- [ ] `TOOL_ALLOWED_HOSTS` + egress firewall  
+- [ ] Load tests: concurrency, queues, provider fallback  
+- [ ] Backups, monitoring, log retention  
+- [ ] Independent security review (SSH/web surface)  
+- [ ] Frontend rebuild pipeline into `shared/frontend_dist` documented in CI  
+
+---
+
+## Ops reminder
+
+Host code ≠ running image. After Python changes:
+
+```bash
+docker compose -p agentsmorfv02 … build --no-cache backend && up -d backend
+```
+
+See [docs/OPS_RUNBOOK.md](docs/OPS_RUNBOOK.md).

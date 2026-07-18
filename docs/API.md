@@ -1,26 +1,43 @@
 # Agents Morf API
 
-Base path: `/api/v1`
+Base path: **`/api/v1`**
 
-Interactive documentation:
+Interactive docs (when API is up):
 
-- `/api/docs`
-- `/api/redoc`
-- `/api/openapi.json`
+| URL | Content |
+|-----|---------|
+| `/api/docs` | Swagger UI |
+| `/api/redoc` | ReDoc |
+| `/api/openapi.json` | OpenAPI JSON |
+
+Public staging: `https://agent.codemorf.tech/api/v1/...`
+
+---
 
 ## Authentication
 
-Dashboard routes use a JWT access token. External products should use API keys created under **API keys**.
+### Dashboard JWT
+
+```http
+Authorization: Bearer <access_token>
+X-Organization-ID: <uuid>   # optional multi-org switch
+```
+
+### Product API key
 
 ```http
 Authorization: Bearer am_...
 ```
 
-API keys are shown only once. The database stores a keyed hash, not the raw secret.
+Keys are shown once. DB stores a keyed hash. Scopes include `chat:write`, `tools:result`, `feedback:write`, etc.
+
+---
 
 ## Chat completions
 
 `POST /api/v1/chat/completions`
+
+### Request (product)
 
 ```json
 {
@@ -32,18 +49,42 @@ API keys are shown only once. The database stores a keyed hash, not the raw secr
   ],
   "remember": true,
   "stream": false,
+  "runtime": "api",
   "metadata": {"source": "allsender"}
 }
 ```
 
-Response:
+### Request (Studio / Terminal)
+
+```json
+{
+  "agent_id": "7eb6da16-e198-469a-a7ee-cc5d8b4d7a12",
+  "runtime": "studio",
+  "end_user_id": "terminal-user",
+  "messages": [
+    {"role": "user", "content": "ver allsender.tech"}
+  ]
+}
+```
+
+### `runtime`
+
+| Value | Meaning |
+|-------|---------|
+| `studio` | Dashboard/Terminal: platform tools execute; business tools demo |
+| `api` | Product: client tools returned for execution |
+| omitted | JWT → studio; API key → api |
+
+See [STUDIO_RUNTIME.md](./STUDIO_RUNTIME.md).
+
+### Response (simplified)
 
 ```json
 {
   "id": "chatcmpl_...",
   "object": "chat.completion",
-  "model": "qwen2.5:7b",
-  "provider": "Ollama",
+  "model": "llama-3.1-8b-instant",
+  "provider": "groq",
   "conversation_id": "...",
   "assistant_message_id": "...",
   "choices": [
@@ -57,16 +98,34 @@ Response:
       "finish_reason": "stop"
     }
   ],
-  "usage": {},
+  "usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0
+  },
   "memory_hits": 2,
-  "knowledge_hits": 3,
+  "knowledge_hits": 0,
   "request_id": "..."
 }
 ```
 
-## Tool calls
+Studio responses may include **already executed** platform tools in `tool_calls` (status `success` / `failed`, reasons like `prefetch_on_web_intent`, `auto_explore_remote_after_login`).
 
-A response can have `finish_reason: tool_calls` and return:
+### Errors
+
+| HTTP | Meaning |
+|------|---------|
+| 401 | Auth missing/invalid |
+| 403 | Scope / force_local denied |
+| 404 | Agent/conversation not found |
+| 429 | Org quota |
+| 502 | Provider failure (`ProviderError`) — reintentar; ver OPS runbook |
+
+---
+
+## Tool calls (client)
+
+When `finish_reason: tool_calls`:
 
 ```json
 {
@@ -79,40 +138,78 @@ A response can have `finish_reason: tool_calls` and return:
 }
 ```
 
-The calling backend must execute client tools. A pending tool call does not mean the action succeeded.
+The **calling backend** must execute client tools. Pending ≠ success.
 
-## Core resources
+Continuation: [TOOL_RESULT_CONTINUATION.md](./TOOL_RESULT_CONTINUATION.md)
 
-- `/auth`
-- `/organizations`
-- `/agents`
-- `/providers`
-- `/tools`
-- `/knowledge-bases`
-- `/memory`
-- `/training`
-- `/api-keys`
-- `/conversations`
-- `/chat/completions`
-- `/health`
-- `/ready`
+```http
+POST /api/v1/tool-results
+```
+
+---
+
+## Core resource groups
+
+| Prefix | Purpose |
+|--------|---------|
+| `/auth` | Login, me, password |
+| `/organizations` | Tenant |
+| `/agents` | CRUD, publish, versions, manifest, evaluate |
+| `/agent-templates` | Official packs + install |
+| `/providers` | Model providers (admin) |
+| `/tools` | Tool registry |
+| `/knowledge-bases` | RAG docs |
+| `/memory` | Scoped memory |
+| `/training` | Datasets / examples / eval |
+| `/api-keys` | Product keys |
+| `/conversations` | Threads + messages |
+| `/chat/completions` | Main inference |
+| `/tool-results` | Client continuation |
+| `/feedback` | Outcomes |
+| `/health` / `/ready` | Probes |
+
+---
 
 ## Streaming
 
-Set `stream: true` to receive Server-Sent Events using OpenAI-style chunks. The current release preserves API streaming semantics; provider-native real-time streaming can be expanded without changing the endpoint contract.
+`stream: true` → SSE OpenAI-style chunks. Expand provider-native streaming without changing the endpoint contract when ready.
 
+---
 
 ## Feedback
-
-External products can submit outcome feedback using an API key with `feedback:write`:
 
 ```http
 POST /api/v1/feedback
 ```
 
-Corrections are not applied automatically. An authorized developer reviews them and calls `POST /api/v1/feedback/{feedback_id}/promote` to create a curated training example.
+Corrections are not auto-applied. Promote with:
 
+```http
+POST /api/v1/feedback/{feedback_id}/promote
+```
 
-## Knowledge document upload
+---
 
-`POST /api/v1/knowledge-bases/{knowledge_base_id}/documents/upload` accepts multipart files up to the configured limit. Supported formats are PDF, DOCX, TXT, Markdown, CSV and JSON. Extracted text is chunked, stored in PostgreSQL and indexed in Qdrant when embeddings are available.
+## Knowledge upload
+
+`POST /api/v1/knowledge-bases/{id}/documents/upload` — multipart.  
+Formats: PDF, DOCX, TXT, Markdown, CSV, JSON. Chunked + optional Qdrant index.
+
+---
+
+## Integration manifest
+
+```http
+GET /api/v1/agents/{id}/integration-manifest
+```
+
+Returns curl / Python / JS / PHP samples with **placeholder** keys (`am_YOUR_KEY`), never real secrets.
+
+---
+
+## Related
+
+- [CLIENT_TOOL_EXECUTION.md](./CLIENT_TOOL_EXECUTION.md)  
+- [PLATFORM_TOOLS.md](./PLATFORM_TOOLS.md)  
+- [AGENT_BUILDER.md](./AGENT_BUILDER.md)  
+- [OPS_RUNBOOK.md](./OPS_RUNBOOK.md)  
