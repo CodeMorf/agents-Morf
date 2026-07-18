@@ -120,17 +120,17 @@ def _clean_web_query(text: str) -> str:
     return q.strip() or (text or "").strip()
 
 DEFAULT_AGENT_PROMPT = """You are an operational AI agent on Agents Morf — not a passive FAQ bot.
-You work like Grok Build (xai-org/grok-build): explore, read, search, edit, run allowed commands,
-search the web, connect via SSH when the user provides host credentials, and finish with tool results.
-Act: understand intent, gather missing data, CALL tools, then answer with results.
-Use workspace tools (read_file, list_dir, grep, search_replace, run_terminal_cmd) in the sandbox.
-Use platform.ssh_test / platform.ssh_exec when the user asks to enter a remote server (ssh user@host + password).
-Use platform tools (web_search, web_fetch, knowledge, memory, datetime, calculate).
-For customer business tools (sales, restaurant, tickets…), emit structured tool calls.
-Never invent successful orders, payments, reservations or inventory without a tool result.
-Never refuse SSH in Studio when credentials are provided — call the tools.
-Never print passwords back to the user.
-Be proactive, concise and useful in the user's language.
+You work like Grok Build (xai-org/grok-build): explore, read, search, edit, run commands,
+search the web, SSH into servers when credentials are given, and report REAL tool results.
+
+When SSH_EXEC_PREFETCH or tool results include remote stdout, you MUST:
+1) Confirm access without printing the password.
+2) Summarize what you found (hostname, OS, key folders under /www, docker if any).
+3) Propose 2-3 next concrete actions (e.g. list a project path, check nginx, tail a log).
+Do NOT stop at "access confirmed" — act like a senior ops agent.
+
+Use workspace tools for local sandbox coding. Use platform.ssh_* for remote hosts.
+Never invent file listings. Never print passwords. Reply in the user's language (Spanish if they write Spanish).
 """
 
 
@@ -423,12 +423,31 @@ async def run_agent(
         except Exception as exc:  # noqa: BLE001
             web_prefetch = {"error": str(exc), "query": web_query or user_query, "results": []}
 
-    # Proactive SSH test when user pastes ssh user@host + password (Studio only).
+    # Proactive SSH: test + explore remote (Grok-like) when user pastes credentials.
     ssh_prefetch: dict[str, Any] | None = None
+    ssh_exec_prefetch: dict[str, Any] | None = None
     ssh_hint = parse_ssh_hint_from_user_text(user_query) if studio and user_query else None
     if studio and settings.workspace_ssh_enabled and ssh_hint:
         try:
             ssh_prefetch = execute_ssh_tool("platform.ssh_test", ssh_hint)
+            # If login works, immediately explore the server (agent must use this output).
+            if ssh_prefetch.get("ok"):
+                explore_cmd = (
+                    "set -e; echo '=== HOST ==='; hostname; whoami; pwd; "
+                    "echo '=== OS ==='; uname -a; "
+                    "echo '=== DISK ==='; df -h 2>/dev/null | head -12; "
+                    "echo '=== / ==='; ls -la / 2>/dev/null | head -25; "
+                    "echo '=== /www ==='; ls -la /www 2>/dev/null | head -20; "
+                    "echo '=== /www/wwwroot ==='; ls -la /www/wwwroot 2>/dev/null | head -25; "
+                    "echo '=== DOCKER ==='; (docker ps --format 'table {{.Names}}\\t{{.Status}}' 2>/dev/null || true) | head -20"
+                )
+                ssh_exec_prefetch = execute_ssh_tool(
+                    "platform.ssh_exec",
+                    {
+                        **ssh_hint,
+                        "command": explore_cmd,
+                    },
+                )
         except Exception as exc:  # noqa: BLE001
             ssh_prefetch = {"ok": False, "error": str(exc), "host": ssh_hint.get("host")}
 
@@ -449,9 +468,16 @@ async def run_agent(
                 else ""
             ),
             (
-                "SSH_TEST_PREFETCH (already executed — password redacted; report connectivity):\n"
-                + json.dumps(ssh_prefetch, ensure_ascii=False)[:4000]
+                "SSH_TEST_PREFETCH (already executed — do NOT print the password):\n"
+                + json.dumps(ssh_prefetch, ensure_ascii=False)[:2500]
                 if ssh_prefetch
+                else ""
+            ),
+            (
+                "SSH_EXEC_PREFETCH (REAL remote shell output — summarize like Grok Build: what you found "
+                "on the server, key dirs, services; suggest next ssh_exec commands):\n"
+                + json.dumps(ssh_exec_prefetch, ensure_ascii=False)[:8000]
+                if ssh_exec_prefetch
                 else ""
             ),
         ]
@@ -516,6 +542,24 @@ async def run_agent(
                 "requires_approval": False,
                 "status": "success" if ssh_prefetch.get("ok") else "failed",
                 "reason": "prefetch_on_ssh_intent",
+                "simulated": False,
+            }
+        )
+    if ssh_exec_prefetch is not None:
+        tool_calls.append(
+            {
+                "id": f"call_ssh_exec_{uuid.uuid4().hex[:10]}",
+                "name": "platform.ssh_exec",
+                "arguments": {
+                    "host": (ssh_hint or {}).get("host"),
+                    "username": (ssh_hint or {}).get("username"),
+                    "password": "***",
+                    "command": "explore: hostname, disk, /www, docker",
+                },
+                "execution_mode": "server",
+                "requires_approval": False,
+                "status": "success" if ssh_exec_prefetch.get("ok") else "failed",
+                "reason": "auto_explore_remote_after_login",
                 "simulated": False,
             }
         )

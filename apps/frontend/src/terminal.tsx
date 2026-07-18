@@ -293,8 +293,9 @@ print(r.json())`
           <p className="eyebrow">SECURE PLAYGROUND</p>
           <h1>Agents Morf Terminal</h1>
           <p className="muted">
-            Playground estilo Grok Build: read_file, list_dir, grep, search_replace y run_terminal_cmd (allowlist) en sandbox real.
-            No es shell libre del VPS. Tools de negocio del cliente: demo o tool_results.
+            Agente operativo real: workspace sandbox + <b>SSH remoto</b> + web. Ejemplo:
+            <code> ssh root@86.48.20.221 Gaia1234</code> — entra, explora /www y resume.
+            Solo tools de negocio del cliente son demo; SSH/workspace/web SÍ se ejecutan.
           </p>
         </div>
         <div className="row-actions">
@@ -339,9 +340,10 @@ print(r.json())`
             <input value={externalConversationId} onChange={e => setExternalConversationId(e.target.value)} placeholder="opcional" />
           </label>
           <div className="chips">
-            <span>execution_mode=client</span>
-            <span>sin shell VPS</span>
-            <span>tool simulator</span>
+            <span>runtime=studio</span>
+            <span>SSH real</span>
+            <span>workspace real</span>
+            <span>negocio=demo</span>
           </div>
           <p className="muted small">
             Org: {localStorage.getItem('organization_id')?.slice(0, 8) || '—'}…
@@ -413,7 +415,10 @@ print(r.json())`
           </div>
 
           <h4>Client Tool Simulator</h4>
-          <p className="muted small">Nunca ejecuta operaciones reales. Solo reenvía JSON al endpoint /tool-results.</p>
+          <p className="muted small">
+            Solo para tools de <b>negocio del cliente</b> (sales.*, restaurant.*). 
+            SSH, workspace y web ya se ejecutan en el servidor — no hace falta simularlos.
+          </p>
           {pendingTools.length === 0 && <p className="muted">Sin tool_calls pendientes.</p>}
           {pendingTools.length > 0 && (
             <label>Tool call
